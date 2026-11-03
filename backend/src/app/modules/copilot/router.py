@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncGenerator
 from uuid import UUID
 
@@ -18,6 +19,8 @@ from app.modules.copilot.schemas import (
     ToolExecutionLogResponse,
 )
 from app.modules.copilot.service import CopilotService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -202,8 +205,12 @@ async def stream_chat_with_agent(
     )
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        async for token in token_generator:
-            yield f"data: {token}\n\n"
-        yield "data: [DONE]\n\n"
+        try:
+            async for token in token_generator:
+                yield f"data: {token}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as exc:
+            logger.error("Streaming error in copilot: %s", exc, exc_info=True)
+            yield f"data: [ERROR]: {str(exc)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

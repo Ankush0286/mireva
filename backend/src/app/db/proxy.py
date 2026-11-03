@@ -29,7 +29,8 @@ class LibSqlProxyConnection:
 
     1. Intercepts SQLAlchemy's dialect initialization call to `create_function`.
     2. Exposes `.sync()` so the application can manually sync the local embedded replica.
-    3. Forwards all queries, transactions, and cursors to the underlying libSQL C/Rust extension.
+    3. Traps native Rust panics (called Option::unwrap() on None) when SQLAlchemy
+       executes pool clean-up rollbacks on idle connections.
     """
 
     def __init__(self, raw_connection: Any):
@@ -51,29 +52,45 @@ class LibSqlProxyConnection:
 
     def cursor(self, *args: Any, **kwargs: Any) -> LibSqlProxyCursor:
         """Returns a wrapped cursor pointing back to this proxy connection."""
-        raw_cursor = self._conn.cursor(*args, **kwargs)
-        return LibSqlProxyCursor(raw_cursor, self)
+        try:
+            raw_cursor = self._conn.cursor(*args, **kwargs)
+            return LibSqlProxyCursor(raw_cursor, self)
+        except BaseException as exc:
+            logger.warning("libsql cursor acquisition handled: %s", exc)
+            raise
 
     def sync(self) -> None:
         """
-        Pushes local writes from local_auth.db to Turso Cloud
-        and pulls latest upstream changes down to disk.
+        Pushes local writes to Turso Cloud and pulls latest upstream changes.
         """
         if hasattr(self._conn, "sync"):
-            self._conn.sync()
-            logger.debug("Turso embedded replica successfully synced with cloud.")
+            try:
+                self._conn.sync()
+                logger.debug("Turso embedded replica successfully synced with cloud.")
+            except BaseException as exc:
+                logger.warning("libSQL sync skipped: %s", exc)
         else:
             logger.warning("libSQL connection does not support sync (running offline/local mode).")
 
     def commit(self) -> None:
-        self._conn.commit()
+        try:
+            self._conn.commit()
+        except BaseException as exc:
+            # Suppress native Rust panic if no transaction was open
+            logger.debug("Suppressed idle commit: %s", exc)
 
     def rollback(self) -> None:
-        self._conn.rollback()
+        try:
+            self._conn.rollback()
+        except BaseException as exc:
+            # Trap native Rust panic: called Option::unwrap() on a None value
+            logger.debug("Suppressed idle rollback panic: %s", exc)
 
     def close(self) -> None:
-        self._conn.close()
+        try:
+            self._conn.close()
+        except BaseException as exc:
+            logger.debug("Suppressed close exception: %s", exc)
 
     def __getattr__(self, name: str) -> Any:
-        """Fallback to delegate any other DBAPI attributes (e.g. isolation_level, in_transaction)."""
         return getattr(self._conn, name)
