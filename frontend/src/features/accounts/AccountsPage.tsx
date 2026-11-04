@@ -147,6 +147,21 @@ export const AccountsPage: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
+  // User-triggered account reload (refresh button, after closing auth studio)
+  const loadAccounts = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.accounts.list(false);
+      setAccounts(data);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load connected accounts.');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Initial load on mount (no synchronous setState calls in effect body)
   useEffect(() => {
     let isMounted = true;
     api.accounts

@@ -15,6 +15,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Image as ImageIcon,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 import {
   api,
@@ -81,6 +83,21 @@ export const ActionStudioPage: React.FC = () => {
   const wsRef = useRef<WebSocket | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // User-triggered recipe reload (refresh button, after exiting live studio)
+  const loadRecipes = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.recipes.list({ active_only: false });
+      setRecipes(data);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load custom workflows.');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Initial load on mount (no synchronous setState calls in effect body)
   useEffect(() => {
     let isMounted = true;
     api.recipes
@@ -184,6 +201,7 @@ export const ActionStudioPage: React.FC = () => {
       }
     };
 
+    ws.onerror = () => setStudioStatus('Connection failed. Ensure backend is running.');
     ws.onclose = () => setIsWsConnected(false);
   };
 
@@ -193,7 +211,7 @@ export const ActionStudioPage: React.FC = () => {
     setIsWsConnected(false);
     setHasReceivedFrame(false);
     setIsLiveStudioActive(false);
-    loadData();
+    loadRecipes();
   };
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -236,14 +254,48 @@ export const ActionStudioPage: React.FC = () => {
     wsRef.current.send(JSON.stringify({ type: 'click', x: targetX, y: targetY }));
   };
 
-  const handleCanvasKeyDown = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
+  // Physical Keyboard Listener with Clipboard Paste (Ctrl+V) and Select All (Ctrl+A)
+  const handleCanvasKeyDown = async (e: React.KeyboardEvent<HTMLCanvasElement>) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.key)) e.preventDefault();
+
+    // Handle Ctrl+V / Cmd+V (Paste)
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+      e.preventDefault();
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          wsRef.current.send(JSON.stringify({ type: 'type', text }));
+        }
+      } catch {
+        // Handled by onPaste fallback
+      }
+      return;
+    }
+
+    // Handle Ctrl+A / Cmd+A (Select All)
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+      e.preventDefault();
+      wsRef.current.send(JSON.stringify({ type: 'key', key: 'ControlOrMeta+A' }));
+      return;
+    }
+
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.key)) {
+      e.preventDefault();
+    }
 
     if (['Backspace', 'Delete', 'Enter', 'Tab', 'Escape'].includes(e.key) || e.key.startsWith('Arrow')) {
       wsRef.current.send(JSON.stringify({ type: 'key', key: e.key }));
     } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       wsRef.current.send(JSON.stringify({ type: 'type', text: e.key }));
+    }
+  };
+
+  // Clipboard Paste Event Listener
+  const handleCanvasPaste = (e: React.ClipboardEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const pastedText = e.clipboardData.getData('text');
+    if (pastedText && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'type', text: pastedText }));
     }
   };
 
@@ -279,6 +331,17 @@ export const ActionStudioPage: React.FC = () => {
     }
   };
 
+  const handleDeleteRecipe = async (recipe: ActionRecipe) => {
+    if (!window.confirm(`Delete custom workflow "${recipe.name}"?`)) return;
+    try {
+      await api.recipes.delete(recipe.id);
+      setRecipes((prev) => prev.filter((r) => r.id !== recipe.id));
+      showToast(`Workflow "${recipe.name}" deleted.`);
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to delete workflow.');
+    }
+  };
+
   // =========================================================================
   // VIEW A: LIVE STUDIO WORKSPACE
   // =========================================================================
@@ -290,7 +353,7 @@ export const ActionStudioPage: React.FC = () => {
 
         <div className="px-4 py-2.5 bg-slate-800 border-b border-slate-700 flex items-center justify-between shrink-0 text-white">
           <div className="flex items-center gap-3">
-            <button onClick={exitLiveStudio} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-xs font-semibold text-white transition-colors">
+            <button onClick={exitLiveStudio} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-xs font-semibold text-white transition-colors cursor-pointer">
               <ArrowLeft size={14} /><span>Exit Studio</span>
             </button>
             <span className={`px-2 py-0.5 rounded-md text-[10.5px] font-bold ${pMeta?.badgeBg} ${pMeta?.badgeText}`}>{pMeta?.name}</span>
@@ -304,7 +367,7 @@ export const ActionStudioPage: React.FC = () => {
               <Compass size={13} className="text-blue-400 shrink-0" />
               <input type="text" value={urlInput} onChange={(e) => setUrlInput(e.target.value)} className="w-full bg-transparent text-xs text-white outline-none" />
             </div>
-            <button type="submit" className="px-3 py-1 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold">Go</button>
+            <button type="submit" className="px-3 py-1 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer">Go</button>
           </form>
           <span className="text-xs font-bold text-slate-300 truncate max-w-xs">{recipeName}</span>
         </div>
@@ -326,6 +389,7 @@ export const ActionStudioPage: React.FC = () => {
                 height={800}
                 onClick={handleCanvasClick}
                 onKeyDown={handleCanvasKeyDown}
+                onPaste={handleCanvasPaste}
                 className={`max-w-full max-h-full object-contain cursor-crosshair outline-none transition-opacity duration-300 ${hasReceivedFrame ? 'opacity-100' : 'opacity-0'}`}
               />
               {clickRipple && (
@@ -334,12 +398,12 @@ export const ActionStudioPage: React.FC = () => {
             </div>
 
             <div className="absolute bottom-3 inset-x-8 max-w-lg mx-auto flex items-center gap-2 p-1.5 rounded-2xl bg-white/95 backdrop-blur-md border border-[#DCE7F5] shadow-xl z-20">
-              <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#EBF3FC] text-[#0E3A75] text-xs font-semibold shrink-0 shadow-2xs">
+              <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#EBF3FC] text-[#0E3A75] text-xs font-semibold shrink-0 shadow-2xs cursor-pointer">
                 <ImageIcon size={14} /><span>Upload Media</span>
               </button>
               <form onSubmit={handleSendText} className="flex-1 flex items-center gap-1.5">
                 <input type="text" value={textInputBuffer} onChange={(e) => setTextInputBuffer(e.target.value)} placeholder="Or paste text here..." className="flex-1 px-2.5 py-1 text-xs font-medium text-[#09122A] bg-transparent outline-none" />
-                <button type="submit" className="px-3 py-1.5 rounded-xl bg-[#0E3A75] text-white text-xs font-semibold shadow-xs shrink-0">Send</button>
+                <button type="submit" className="px-3 py-1.5 rounded-xl bg-[#0E3A75] text-white text-xs font-semibold shadow-xs shrink-0 cursor-pointer">Send</button>
               </form>
             </div>
           </div>
@@ -353,7 +417,7 @@ export const ActionStudioPage: React.FC = () => {
             <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
               <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">
                 <span>Recorded Steps ({liveSteps.length})</span>
-                {liveSteps.length > 0 && <button onClick={() => setLiveSteps([])} className="text-rose-400 hover:underline">Clear</button>}
+                {liveSteps.length > 0 && <button onClick={() => setLiveSteps([])} className="text-rose-400 hover:underline cursor-pointer">Clear</button>}
               </div>
 
               {liveSteps.length === 0 ? (
@@ -378,7 +442,7 @@ export const ActionStudioPage: React.FC = () => {
             </div>
 
             <div className="p-4 border-t border-slate-800 bg-slate-800/60 space-y-2">
-              <button onClick={handleSaveLiveRecipe} className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md">
+              <button onClick={handleSaveLiveRecipe} className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md cursor-pointer">
                 Save Custom Workflow ({liveSteps.length} Steps)
               </button>
             </div>
@@ -415,7 +479,10 @@ export const ActionStudioPage: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2.5 shrink-0">
+          <button onClick={loadRecipes} title="Refresh workflows" className="w-9 h-9 rounded-xl bg-white border border-[#DCE7F5] hover:bg-slate-50 text-slate-600 flex items-center justify-center shadow-2xs cursor-pointer">
+            <RefreshCw size={14} className={loading ? 'animate-spin text-[#0E3A75]' : ''} />
+          </button>
           <button
             type="button"
             onClick={() => openLaunchModal('instagram')}
@@ -430,14 +497,20 @@ export const ActionStudioPage: React.FC = () => {
       {/* 2. Filters */}
       <div className="flex flex-wrap items-center gap-3 mb-6 p-2 rounded-2xl bg-white/80 border border-[#DCE7F5]">
         <div className="flex items-center gap-1">
-          <button onClick={() => setSelectedPlatform('all')} className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${selectedPlatform === 'all' ? 'bg-[#EBF3FC] text-[#0E3A75]' : 'text-slate-500'}`}>All Platforms</button>
+          <button onClick={() => setSelectedPlatform('all')} className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer ${selectedPlatform === 'all' ? 'bg-[#EBF3FC] text-[#0E3A75]' : 'text-slate-500'}`}>All Platforms</button>
           {PLATFORMS.map((p) => (
-            <button key={p.id} onClick={() => setSelectedPlatform(p.id)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${selectedPlatform === p.id ? 'bg-[#EBF3FC] text-[#0E3A75]' : 'text-slate-500'}`}>
+            <button key={p.id} onClick={() => setSelectedPlatform(p.id)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer ${selectedPlatform === p.id ? 'bg-[#EBF3FC] text-[#0E3A75]' : 'text-slate-500'}`}>
               {p.name.split(' ')[0]}
             </button>
           ))}
         </div>
       </div>
+
+      {error && (
+        <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+          <AlertCircle size={15} /><span>{error}</span>
+        </div>
+      )}
 
       {/* 3. Grid */}
       {loading ? (
@@ -453,7 +526,7 @@ export const ActionStudioPage: React.FC = () => {
           <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 mb-5">
             Default posts, DMs, and scrapers are handled natively. Use this studio to record custom interactions (e.g. Story Engager, Audience Follower).
           </p>
-          <button onClick={() => openLaunchModal('instagram')} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0E3A75] text-white text-xs font-semibold shadow-xs">
+          <button onClick={() => openLaunchModal('instagram')} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0E3A75] text-white text-xs font-semibold shadow-xs cursor-pointer">
             <Monitor size={14} /><span>Record First Workflow</span>
           </button>
         </div>
@@ -494,10 +567,10 @@ export const ActionStudioPage: React.FC = () => {
                 <div className="flex items-center justify-between pt-3 border-t border-[#F0F5FA]">
                   <span className="text-[11px] font-mono text-slate-400">Updated {new Date(recipe.updated_at).toLocaleDateString()}</span>
                   <div className="flex items-center gap-1.5">
-                    <button onClick={() => setInspectingRecipe(recipe)} className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#F1F4F9] hover:bg-[#E4EBF5] text-xs font-semibold text-[#09122A]">
+                    <button onClick={() => setInspectingRecipe(recipe)} className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#F1F4F9] hover:bg-[#E4EBF5] text-xs font-semibold text-[#09122A] cursor-pointer">
                       <Eye size={12} /><span>Inspect</span>
                     </button>
-                    <button onClick={() => api.recipes.delete(recipe.id).then(() => setRecipes((prev) => prev.filter((r) => r.id !== recipe.id)))} className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                    <button onClick={() => handleDeleteRecipe(recipe)} className="w-8 h-8 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 flex items-center justify-center cursor-pointer transition-colors" title="Delete workflow">
                       <Trash2 size={13} />
                     </button>
                   </div>
@@ -522,7 +595,7 @@ export const ActionStudioPage: React.FC = () => {
                   <span className="text-xs text-slate-400">Select target platform</span>
                 </div>
               </div>
-              <button onClick={() => setIsLaunchModalOpen(false)} className="w-8 h-8 rounded-xl bg-slate-50 text-slate-400 flex items-center justify-center"><X size={15} /></button>
+              <button onClick={() => setIsLaunchModalOpen(false)} className="w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-slate-700 flex items-center justify-center cursor-pointer"><X size={15} /></button>
             </div>
 
             <div className="py-5 space-y-4">
@@ -530,7 +603,7 @@ export const ActionStudioPage: React.FC = () => {
                 {PLATFORMS.map((p) => {
                   const selected = targetPlatform === p.id;
                   return (
-                    <button key={p.id} onClick={() => { setTargetPlatform(p.id); setRecipeName(`${p.name} Custom Workflow`); }} className={`p-3 rounded-2xl border flex items-center gap-2.5 text-xs font-bold transition-all ${selected ? 'bg-[#F4F9FF] border-[#0E3A75] text-[#0E3A75]' : 'bg-white border-[#DCE7F5] text-slate-600'}`}>
+                    <button key={p.id} onClick={() => { setTargetPlatform(p.id); setRecipeName(`${p.name} Custom Workflow`); }} className={`p-3 rounded-2xl border flex items-center gap-2.5 text-xs font-bold transition-all cursor-pointer ${selected ? 'bg-[#F4F9FF] border-[#0E3A75] text-[#0E3A75]' : 'bg-white border-[#DCE7F5] text-slate-600'}`}>
                       <span className={`w-3 h-3 rounded-full ${p.badgeBg}`} /><span>{p.name}</span>
                     </button>
                   );
@@ -544,8 +617,8 @@ export const ActionStudioPage: React.FC = () => {
             </div>
 
             <div className="pt-3 border-t border-[#F0F5FA] flex justify-end gap-2">
-              <button onClick={() => setIsLaunchModalOpen(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-xs font-semibold text-slate-600">Cancel</button>
-              <button onClick={launchLiveStudio} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#0E3A75] text-white text-xs font-semibold shadow-xs">
+              <button onClick={() => setIsLaunchModalOpen(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-xs font-semibold text-slate-600 hover:bg-slate-200 cursor-pointer">Cancel</button>
+              <button onClick={launchLiveStudio} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#0E3A75] hover:bg-[#092854] text-white text-xs font-semibold shadow-xs cursor-pointer">
                 <span>Launch Studio</span><ArrowRight size={13} />
               </button>
             </div>
@@ -562,7 +635,7 @@ export const ActionStudioPage: React.FC = () => {
                 <h3 className="font-bold text-[16px] text-[#09122A]">{inspectingRecipe.name}</h3>
                 <span className="text-xs text-slate-400">{inspectingRecipe.steps?.length || 0} automated execution steps</span>
               </div>
-              <button onClick={() => setInspectingRecipe(null)} className="w-8 h-8 rounded-xl bg-slate-50 text-slate-400 flex items-center justify-center"><X size={15} /></button>
+              <button onClick={() => setInspectingRecipe(null)} className="w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-slate-700 flex items-center justify-center cursor-pointer"><X size={15} /></button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">
@@ -585,7 +658,7 @@ export const ActionStudioPage: React.FC = () => {
             </div>
 
             <div className="px-6 py-3.5 border-t border-[#F0F5FA] bg-[#F8FBFF] flex justify-end">
-              <button onClick={() => setInspectingRecipe(null)} className="px-4 py-2 rounded-xl bg-[#0E3A75] text-white text-xs font-semibold">Close Inspector</button>
+              <button onClick={() => setInspectingRecipe(null)} className="px-4 py-2 rounded-xl bg-[#0E3A75] hover:bg-[#092854] text-white text-xs font-semibold cursor-pointer">Close Inspector</button>
             </div>
           </div>
         </div>
@@ -593,3 +666,5 @@ export const ActionStudioPage: React.FC = () => {
     </div>
   );
 };
+
+export default ActionStudioPage;
