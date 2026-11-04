@@ -1,7 +1,8 @@
 import asyncio
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 from typing import Literal
+
 from dotenv import load_dotenv
 from playwright.async_api import Page, async_playwright
 from pydantic_ai import Agent, RunContext

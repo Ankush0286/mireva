@@ -1,4 +1,9 @@
+from unittest.mock import AsyncMock
+
+import pytest
 from fastapi.testclient import TestClient
+
+from app.modules.accounts.service import AccountService
 
 
 def test_create_and_get_account_flow(client: TestClient):
@@ -116,3 +121,29 @@ def test_invalid_payload_returns_422(client: TestClient):
     response = client.post("/api/v1/accounts/", json=payload)
     assert response.status_code == 422
     assert response.json()["error"] == "VALIDATION_ERROR"
+
+def test_account_session_websocket_endpoint_handshake(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    """
+    Verifies that the /session/ws endpoint accepts WebSocket upgrades
+    and delegates execution cleanly to AccountService.
+    """
+    # 1. Create account via API
+    res = client.post(
+        "/api/v1/accounts/",
+        json={"platform": "instagram", "handle": "ws_test_account"},
+    )
+    assert res.status_code == 201
+    account_id = res.json()["id"]
+
+    # 2. Mock run_session_authentication_stream so the test doesn't launch a real browser
+    mock_stream = AsyncMock()
+    monkeypatch.setattr(AccountService, "run_session_authentication_stream", mock_stream)
+
+    # 3. Connect via Starlette/FastAPI TestClient WebSocket
+    with client.websocket_connect(f"/api/v1/accounts/{account_id}/session/ws"):
+        pass
+
+    # 4. Verify service method was invoked with the correct account ID
+    mock_stream.assert_called_once()
+    args, _ = mock_stream.call_args
+    assert str(args[0]) == str(account_id)

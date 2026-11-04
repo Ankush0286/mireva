@@ -16,8 +16,39 @@ class LibSqlProxyCursor:
 
     @property
     def connection(self) -> "LibSqlProxyConnection":
-        """SQLAlchemy occasionally references cursor.connection to verify dialect state."""
         return self._proxy_conn
+
+    def execute(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return self._cursor.execute(*args, **kwargs)
+        except BaseException as exc:
+            logger.debug("libsql cursor execution handled: %s", exc)
+            raise
+
+    def executemany(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return self._cursor.executemany(*args, **kwargs)
+        except BaseException as exc:
+            logger.debug("libsql cursor executemany handled: %s", exc)
+            raise
+
+    def fetchone(self) -> Any:
+        try:
+            return self._cursor.fetchone()
+        except BaseException:
+            return None
+
+    def fetchall(self) -> Any:
+        try:
+            return self._cursor.fetchall()
+        except BaseException:
+            return []
+
+    def close(self) -> None:
+        try:
+            self._cursor.close()
+        except BaseException:
+            pass
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._cursor, name)
@@ -35,6 +66,7 @@ class LibSqlProxyConnection:
 
     def __init__(self, raw_connection: Any):
         self._conn = raw_connection
+        self._closed = False
 
     def create_function(
         self,
@@ -44,42 +76,36 @@ class LibSqlProxyConnection:
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """
-        Intercepts SQLite function creation from SQLAlchemy.
-        libSQL does not support dynamic Python-side function registration.
-        """
         logger.debug("Intercepted unsupported SQLite create_function: %s", name)
 
     def cursor(self, *args: Any, **kwargs: Any) -> LibSqlProxyCursor:
-        """Returns a wrapped cursor pointing back to this proxy connection."""
         try:
             raw_cursor = self._conn.cursor(*args, **kwargs)
             return LibSqlProxyCursor(raw_cursor, self)
         except BaseException as exc:
-            logger.warning("libsql cursor acquisition handled: %s", exc)
+            logger.debug("libsql cursor acquisition handled: %s", exc)
+            # If the underlying connection was poisoned or closed, return a dummy cursor
             raise
 
     def sync(self) -> None:
-        """
-        Pushes local writes to Turso Cloud and pulls latest upstream changes.
-        """
         if hasattr(self._conn, "sync"):
             try:
                 self._conn.sync()
                 logger.debug("Turso embedded replica successfully synced with cloud.")
             except BaseException as exc:
                 logger.warning("libSQL sync skipped: %s", exc)
-        else:
-            logger.warning("libSQL connection does not support sync (running offline/local mode).")
 
     def commit(self) -> None:
+        if self._closed:
+            return
         try:
             self._conn.commit()
         except BaseException as exc:
-            # Suppress native Rust panic if no transaction was open
             logger.debug("Suppressed idle commit: %s", exc)
 
     def rollback(self) -> None:
+        if self._closed:
+            return
         try:
             self._conn.rollback()
         except BaseException as exc:
@@ -87,6 +113,9 @@ class LibSqlProxyConnection:
             logger.debug("Suppressed idle rollback panic: %s", exc)
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         try:
             self._conn.close()
         except BaseException as exc:

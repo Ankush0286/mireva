@@ -1,9 +1,10 @@
 import os
 import uuid
+
 import libsql
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, select, String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
+from sqlalchemy import String, create_engine, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 load_dotenv()
 

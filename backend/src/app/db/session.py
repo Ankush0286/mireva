@@ -6,12 +6,14 @@ from typing import Any
 import libsql
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 
 from .proxy import LibSqlProxyConnection
 
 logger = logging.getLogger(__name__)
+
 
 def _ensure_local_db_dir() -> Path:
     """
@@ -28,12 +30,9 @@ def _create_libsql_connection() -> LibSqlProxyConnection:
     Establishes an embedded replica connection using libSQL:
     - Reads and writes locally to disk (LOCAL_DB_PATH) with microsecond latency.
     - Synchronizes changes with Turso Cloud when sync_url and auth_token are configured.
-    - Wraps the raw connection in LibSqlProxyConnection to bypass SQLAlchemy's
-      create_function dialect checks.
     """
     db_path = _ensure_local_db_dir()
 
-    # Embedded replica mode (local file synced to Turso Cloud)
     if settings.TURSO_DATABASE_URL and settings.TURSO_AUTH_TOKEN:
         logger.debug("Connecting to Turso embedded replica at %s", db_path)
         raw_conn: Any = libsql.connect(
@@ -41,32 +40,28 @@ def _create_libsql_connection() -> LibSqlProxyConnection:
             sync_url=settings.TURSO_DATABASE_URL,
             auth_token=settings.TURSO_AUTH_TOKEN,
         )
-
-        # Trigger initial sync on startup to pull the latest schema/data
         try:
             raw_conn.sync()
             logger.info("Turso embedded replica initialized and synced with cloud.")
         except Exception as exc:
-            # Allow startup to continue in offline-first mode if internet/remote is unreachable
             logger.warning(
                 "Initial Turso cloud sync failed (falling back to offline local DB): %s",
                 exc,
             )
     else:
-        # Local-only standalone SQLite mode (useful for offline dev/tests)
-        logger.info("Connecting to local standalone libSQL database at %s", db_path)
+        logger.debug("Connecting to local standalone libSQL database at %s", db_path)
         raw_conn = libsql.connect(database=str(db_path))
 
     return LibSqlProxyConnection(raw_conn)
 
 
-# SQLAlchemy 2.0 Engine
-# sqlite:// tells SQLAlchemy to treat this as SQLite syntax,
-# while the creator hook supplies our proxy-wrapped libSQL connection.
+# Use NullPool: Every Session gets a fresh, isolated connection that is closed
+# when the session closes. This prevents native Rust thread-sharing panics.
 engine = create_engine(
     "sqlite://",
     creator=_create_libsql_connection,
     echo=settings.DB_ECHO,
+    poolclass=NullPool,
     future=True,
 )
 
@@ -82,7 +77,7 @@ session_factory: sessionmaker[Session] = sessionmaker(
 
 def get_db_session() -> Generator[Session, None, None]:
     """
-    FastAPI dependency that yields a database session per request,
+    FastAPI dependency that yields an isolated database session per request,
     rolling back transactions on error and closing the session on completion.
     """
     session: Session = session_factory()
@@ -98,7 +93,6 @@ def get_db_session() -> Generator[Session, None, None]:
 def sync_replica() -> None:
     """
     Manually triggers synchronization between the local embedded replica and Turso Cloud.
-    Can be called by background schedulers, watcher loops, or API endpoints after writes.
     """
     try:
         with engine.connect() as conn:

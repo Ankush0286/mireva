@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Plus,
   ChevronDown,
@@ -23,8 +23,22 @@ export const App: React.FC = () => {
   const [activeView, setActiveView] = useState<ActiveView>('home');
   const [prompt, setPrompt] = useState('');
   const [category, setCategory] = useState('Marketing');
+  const [thinkingMode, setThinkingMode] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+
+  // Close category dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const quickPrompts = [
     {
@@ -51,10 +65,11 @@ export const App: React.FC = () => {
     setIsSubmitting(true);
     setTimeout(() => {
       setIsSubmitting(false);
-    }, 800);
+      setActiveView('dashboard');
+    }, 300);
   };
 
-  // If user navigated to Dashboard or a management module, show full-screen console
+  // Render full-screen console when navigating away from landing page
   if (activeView !== 'home') {
     return (
       <DashboardPage
@@ -64,7 +79,6 @@ export const App: React.FC = () => {
     );
   }
 
-  // Otherwise, render the pristine Pastoral Scenery Hero Landing
   return (
     <div className="relative min-h-screen flex flex-col justify-center items-center px-4 font-sans select-none overflow-hidden">
       {/* Static Pixel-Crisp Scenery Image Background */}
@@ -75,10 +89,10 @@ export const App: React.FC = () => {
         style={{ imageRendering: 'pixelated' }}
       />
 
-      {/* Clean Hanging Island Navbar */}
+      {/* Hanging Island Navbar */}
       <Navbar activeView={activeView} onSelectView={setActiveView} />
 
-      {/* Main Center Hero Workspace (-translate-y-0.5) */}
+      {/* Main Center Hero Workspace */}
       <main className="w-full max-w-[760px] flex flex-col items-center text-center z-10 mx-auto -translate-y-0.5">
         {/* Main Two-Tone Navy Headline */}
         <h1 className="animate-fade-up-1 text-[44px] sm:text-[62px] md:text-[70px] font-bold tracking-[-0.03em] text-[#09122A] leading-[1.06]">
@@ -96,7 +110,7 @@ export const App: React.FC = () => {
         {/* Omnibar Prompt Card */}
         <form
           onSubmit={handleSubmit}
-          className="animate-fade-up-3 w-full mt-9 rounded-[24px] bg-white/95 backdrop-blur-md border border-[#DCE8F6] shadow-[0_16px_48px_-12px_rgba(14,58,117,0.14),0_2px_10px_-2px_rgba(14,58,117,0.06)] p-4 sm:p-5 flex flex-col justify-between transition-all duration-300 hover:border-[#C5D9F0] focus-within:border-[#9EC1EA] focus-within:shadow-[0_20px_60px_-12px_rgba(14,58,117,0.20)]"
+          className="animate-fade-up-3 w-full mt-9 rounded-[24px] bg-white border border-[#E2ECF7] shadow-[0_14px_40px_rgba(14,58,117,0.10)] p-4 sm:p-5 flex flex-col justify-between transition-all duration-200 hover:border-[#C5D9F0] focus-within:border-[#9EC1EA] focus-within:shadow-[0_18px_48px_rgba(14,58,117,0.16)] outline-none"
         >
           {/* Textarea */}
           <textarea
@@ -130,7 +144,7 @@ export const App: React.FC = () => {
               </button>
 
               {/* Category Dropdown */}
-              <div className="relative">
+              <div ref={dropdownRef} className="relative">
                 <button
                   type="button"
                   onClick={() => setDropdownOpen((prev) => !prev)}
@@ -147,7 +161,7 @@ export const App: React.FC = () => {
                 </button>
 
                 {dropdownOpen && (
-                  <div className="absolute left-0 bottom-11 w-44 rounded-2xl bg-white/95 backdrop-blur-md border border-[#DCE8F6] shadow-xl py-1.5 z-30 text-left animate-fade-up-1">
+                  <div className="absolute left-0 bottom-11 w-44 rounded-2xl bg-white border border-[#DCE8F6] shadow-xl py-1.5 z-30 text-left animate-fade-up-1">
                     {CATEGORIES.map((cat) => (
                       <button
                         key={cat}
@@ -169,14 +183,19 @@ export const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Right Controls */}
+            {/* Right Controls: Think Toggle & Send Button */}
             <div className="flex items-center gap-2.5">
               <button
                 type="button"
-                onClick={() => handleSubmit()}
-                className="h-9 px-4 rounded-xl bg-[#F1F4F9] hover:bg-[#E4EBF5] active:scale-95 text-[13.5px] font-medium text-[#0F1B33] transition-all duration-150 cursor-pointer"
+                aria-pressed={thinkingMode}
+                onClick={() => setThinkingMode((prev) => !prev)}
+                className={`h-9 px-4 rounded-xl active:scale-95 text-[13.5px] font-medium transition-all duration-150 cursor-pointer border ${
+                  thinkingMode
+                    ? 'bg-[#EBF3FC] text-[#0E3A75] border-[#9EC1EA] font-semibold shadow-2xs'
+                    : 'bg-[#F1F4F9] hover:bg-[#E4EBF5] text-[#0F1B33] border-transparent'
+                }`}
               >
-                Create
+                Think
               </button>
 
               <button

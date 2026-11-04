@@ -1,6 +1,11 @@
+import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 from uuid import UUID
 
+from fastapi import WebSocket
+from playwright.async_api import async_playwright
 from sqlalchemy.orm import Session
 
 from app.common.enums import AccountStatus, PlatformType
@@ -13,6 +18,8 @@ from app.modules.accounts.exceptions import (
     DailyPostQuotaExceededError,
 )
 from app.modules.accounts.models import ConnectedAccount
+from app.platforms.browser.driver import create_stealth_context
+from app.platforms.browser.session_manager import BrowserSessionManager
 
 
 def _ensure_uuid(val: UUID | str) -> UUID:
@@ -175,3 +182,129 @@ class AccountService:
         self.db.commit()
         self.db.refresh(account)
         return account
+
+    # ================= Browser Session & Authentication =================
+
+    def mark_browser_session_authenticated(
+        self, account_id: UUID | str, storage_path: str | Path
+    ) -> ConnectedAccount:
+        """
+        Updates account state after successful interactive login (2FA/cookies).
+        """
+        account = self.get_by_id_or_raise(account_id)
+        account.has_valid_browser_session = True
+        account.last_browser_login_at = datetime.now(UTC)
+        account.browser_storage_path = str(storage_path)
+        self.db.commit()
+        self.db.refresh(account)
+        return account
+
+    async def run_session_authentication_stream(
+        self,
+        account_id: UUID | str,
+        websocket: WebSocket,
+    ) -> None:
+        """
+        Orchestrates an interactive stealth browser screencast over WebSocket
+        allowing the user to visually solve 2FA/Captchas and capture cookies.
+        """
+
+        account = self.get_by_id_or_raise(account_id)
+        platform_str = account.platform.value if hasattr(account.platform, "value") else str(account.platform)
+
+        session_mgr = BrowserSessionManager()
+        user_data_dir = session_mgr.get_account_session_dir(account.id)
+        storage_state = session_mgr.get_storage_state_path(account.id)
+
+        platform_home_urls = {
+            "instagram": "https://www.instagram.com/",
+            "twitter": "https://x.com/home",
+            "facebook": "https://www.facebook.com/",
+            "email": "https://mail.google.com/",
+        }
+
+        await websocket.send_json({"type": "status", "message": "Launching isolated browser container..."})
+
+        async with async_playwright() as playwright:
+            context = await create_stealth_context(
+                playwright=playwright,
+                user_data_dir=user_data_dir,
+                headless=True,
+                storage_state_path=storage_state if storage_state.exists() else None,
+            )
+
+            page = context.pages[0] if context.pages else await context.new_page()
+            await page.set_viewport_size({"width": 1280, "height": 800})
+
+            # Attach CDP Screencast
+            cdp = await context.new_cdp_session(page)
+
+            def on_screencast_frame(event: dict[str, Any]):
+                async def _send_frame():
+                    try:
+                        data = event.get("data")
+                        session_id = event.get("sessionId")
+                        await websocket.send_json({"type": "frame", "data": data})
+                        await cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
+                    except Exception:
+                        pass
+
+                asyncio.create_task(_send_frame())
+
+            cdp.on("Page.screencastFrame", on_screencast_frame)
+            await cdp.send(
+                "Page.startScreencast",
+                {
+                    "format": "jpeg",
+                    "quality": 75,
+                    "maxWidth": 1280,
+                    "maxHeight": 800,
+                    "everyNthFrame": 1,
+                },
+            )
+
+            target_url = platform_home_urls.get(platform_str.lower(), f"https://www.{platform_str}.com/")
+            await websocket.send_json({"type": "status", "message": f"Loading {target_url}..."})
+            await page.goto(target_url, wait_until="domcontentloaded")
+            await websocket.send_json({"type": "navigated", "url": page.url})
+            await websocket.send_json({"type": "status", "message": "Ready"})
+
+            page.on(
+                "framenavigated",
+                lambda frame: asyncio.create_task(
+                    websocket.send_json({"type": "navigated", "url": page.url})
+                )
+                if frame == page.main_frame
+                else None,
+            )
+
+            try:
+                while True:
+                    msg = await websocket.receive_json()
+                    m_type = msg.get("type")
+
+                    if m_type == "click":
+                        await page.mouse.click(int(msg.get("x", 0)), int(msg.get("y", 0)))
+                    elif m_type == "type":
+                        await page.keyboard.insert_text(msg.get("text", ""))
+                    elif m_type == "key":
+                        key = msg.get("key", "Enter")
+                        if key in ("ControlOrMeta+A", "Control+a", "Meta+a"):
+                            await page.keyboard.press("ControlOrMeta+a")
+                        else:
+                            await page.keyboard.press(key)
+                    elif m_type == "navigate":
+                        nav_url = msg.get("url")
+                        if nav_url:
+                            if not nav_url.startswith(("http://", "https://")):
+                                nav_url = f"https://{nav_url}"
+                            await page.goto(nav_url, wait_until="domcontentloaded")
+                            await websocket.send_json({"type": "navigated", "url": page.url})
+
+            finally:
+                # 1. Save session cookies to disk
+                await session_mgr.save_session_state(context, account.id)
+                await context.close()
+
+                # 2. Update database record via service method
+                self.mark_browser_session_authenticated(account.id, storage_state)

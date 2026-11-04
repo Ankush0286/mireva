@@ -1,25 +1,39 @@
 import React, { useState } from 'react';
 import { Sidebar, type SidebarTab } from '../../components/Sidebar';
 import { ChatPage } from '../chat/ChatPage';
+import { AccountsPage } from '../accounts/AccountsPage';
+import { ActionStudioPage } from '../studio/ActionStudioPage';
 import { type ChatSession } from '../../api/client';
+import { type ActiveView } from '../../components/Navbar';
 
-export const DashboardPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<SidebarTab>('overview');
+interface DashboardPageProps {
+  initialTab?: ActiveView;
+  onBackToHome?: () => void;
+}
+
+export const DashboardPage: React.FC<DashboardPageProps> = ({ initialTab }) => {
+  const [activeTab, setActiveTab] = useState<SidebarTab>(() => {
+    if (initialTab === 'accounts') return 'accounts';
+    if ((initialTab as string) === 'studio') return 'studio';
+    return 'overview';
+  });
+
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const handleNewChat = () => {
     setSelectedSessionId(null);
+    setActiveTab('overview');
   };
 
   const handleSelectSession = (sessionId: string) => {
     setSelectedSessionId(sessionId);
+    setActiveTab('overview');
   };
 
   const handleSessionCreated = (newSession: ChatSession) => {
     setSelectedSessionId(newSession.id);
-    // Triggers sidebar to load the newly created session
     setRefreshTrigger((prev) => prev + 1);
   };
 
@@ -37,12 +51,13 @@ export const DashboardPage: React.FC = () => {
         onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
       />
 
-      {/* 2. Main Workspace: Fixed Viewport */}
+      {/* 2. Main Workspace */}
       <main
         className={`relative flex-1 h-screen overflow-hidden px-8 py-5 transition-[margin] duration-300 ease-[cubic-bezier(0.2,0,0,1)] flex flex-col justify-between ${
           isSidebarCollapsed ? 'ml-16' : 'ml-60'
         }`}
       >
+        {/* Dither Sky Background */}
         <img
           src="/chat-bg.png"
           alt="Dither Sky Background"
@@ -50,13 +65,22 @@ export const DashboardPage: React.FC = () => {
           style={{ imageRendering: 'pixelated' }}
         />
 
-        <div className="relative z-10 h-full flex flex-col">
-          <ChatPage
-            sessionId={selectedSessionId}
-            onSessionCreated={handleSessionCreated}
-          />
+        {/* Active View Switcher */}
+        <div className="relative h-full flex flex-col">
+          {activeTab === 'accounts' ? (
+            <AccountsPage />
+          ) : activeTab === 'studio' ? (
+            <ActionStudioPage />
+          ) : (
+            <ChatPage
+              sessionId={selectedSessionId}
+              onSessionCreated={handleSessionCreated}
+            />
+          )}
         </div>
       </main>
     </div>
   );
 };
+
+export default DashboardPage;

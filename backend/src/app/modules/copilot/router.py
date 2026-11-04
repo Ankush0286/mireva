@@ -1,5 +1,9 @@
+import asyncio
+import json
 import logging
 from collections.abc import AsyncGenerator
+from dataclasses import asdict, is_dataclass
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -8,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.agent.loop import run_agent_turn, stream_agent_turn
+from app.core.agent_config import agent_settings
 from app.db.dependencies import get_db_session
 from app.modules.copilot.schemas import (
     ChatMessageCreateRequest,
@@ -21,7 +26,6 @@ from app.modules.copilot.schemas import (
 from app.modules.copilot.service import CopilotService
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
 
@@ -31,10 +35,38 @@ def get_copilot_service(db: Session = Depends(get_db_session)) -> CopilotService
 
 
 class AgentChatRequest(BaseModel):
-    """Payload accepted by POST /api/v1/copilot/sessions/{session_id}/chat"""
+    """Payload accepted by POST /api/v1/copilot/sessions/{session_id}/chat and /stream"""
 
     content: str = Field(..., min_length=1, max_length=20000)
     model_override: str | None = None
+    thinking: bool = False
+
+
+# =============================================================================
+# Available AI Models Endpoint
+# =============================================================================
+
+
+@router.get(
+    "/models",
+    status_code=status.HTTP_200_OK,
+    summary="List configured AI models for the Copilot selector",
+)
+def list_available_models() -> list[dict[str, Any]]:
+    configured_models = getattr(agent_settings, "AVAILABLE_MODELS", None)
+    if configured_models:
+        return [
+            asdict(m) if is_dataclass(m) and not isinstance(m, type) else dict(m)
+            for m in configured_models
+        ]
+    return [
+        {
+            "id": agent_settings.DEFAULT_MODEL,
+            "name": "GrowthCraft AI",
+            "description": "Fast autonomous tool execution & copywriting",
+            "badge": "DEFAULT",
+        }
+    ]
 
 
 # =============================================================================
@@ -184,6 +216,7 @@ async def chat_with_agent(
         session_id=session_id,
         user_prompt=payload.content,
         model_override=payload.model_override,
+        thinking=payload.thinking,
     )
     return ChatMessageResponse.model_validate(assistant_msg)
 
@@ -202,15 +235,26 @@ async def stream_chat_with_agent(
         session_id=session_id,
         user_prompt=payload.content,
         model_override=payload.model_override,
+        thinking=payload.thinking,
     )
 
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
-            async for token in token_generator:
-                yield f"data: {token}\n\n"
+            async for item in token_generator:
+                yield f"data: {json.dumps(item)}\n\n"
+                # Force Uvicorn event loop to flush SSE packet immediately over the socket
+                await asyncio.sleep(0)
             yield "data: [DONE]\n\n"
         except Exception as exc:
             logger.error("Streaming error in copilot: %s", exc, exc_info=True)
-            yield f"data: [ERROR]: {str(exc)}\n\n"
+            yield f"data: {json.dumps(f'[ERROR]: {str(exc)}')}\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

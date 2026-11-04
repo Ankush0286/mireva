@@ -1,0 +1,115 @@
+[
+  {
+    "type": "click",
+    "description": "Click \"New post\"",
+    "selectors": [
+      "[aria-label=\"New post\"]",
+      "[role=\"img\"]:has-text(\"New post\")"
+    ],
+    "target": null,
+    "variable": null
+  },
+  {
+    "type": "click",
+    "description": "Click \"Select from computer\"",
+    "selectors": [
+      "[role=\"dialog\"] button:has-text(\"Select from computer\")",
+      "button:has-text(\"Select from computer\")"
+    ],
+    "target": null,
+    "variable": null
+  },
+  {
+    "type": "click",
+    "description": "Click \"Create new post\"",
+    "selectors": [
+      "[role=\"dialog\"] [aria-label=\"Create new post\"]",
+      "[aria-label=\"Create new post\"]"
+    ],
+    "target": null,
+    "variable": null
+  },
+  {
+    "type": "upload",
+    "description": "Upload media file",
+    "selectors": [
+      "button:has-text(\"Select from computer\")",
+      "[role=\"button\"]:has-text(\"Select from computer\")"
+    ],
+    "target": "input[type=\"file\"]",
+    "variable": "media_path"
+  },
+  {
+    "type": "click",
+    "description": "Click \"Next\"",
+    "selectors": [
+      "[role=\"dialog\"] [role=\"button\"]:has-text(\"Next\")",
+      "[role=\"button\"]:has-text(\"Next\")",
+      "[role=\"dialog\"] div:has-text(\"Next\")",
+      "div:has-text(\"Next\")"
+    ],
+    "target": null,
+    "variable": null
+  },
+  {
+    "type": "click",
+    "description": "Click \"Next\"",
+    "selectors": [
+      "[role=\"dialog\"] [role=\"button\"]:has-text(\"Next\")",
+      "[role=\"button\"]:has-text(\"Next\")",
+      "[role=\"dialog\"] div:has-text(\"Next\")",
+      "div:has-text(\"Next\")"
+    ],
+    "target": null,
+    "variable": null
+  },
+  {
+    "type": "click",
+    "description": "Click \"Add a caption...\"",
+    "selectors": [
+      "[role=\"dialog\"] [aria-label=\"Add a caption...\"]",
+      "[aria-label=\"Add a caption...\"]"
+    ],
+    "target": null,
+    "variable": null
+  },
+  {
+    "type": "type",
+    "description": "Type caption text",
+    "selectors": [
+      "[role=\"dialog\"] [aria-label=\"Add a caption...\"]",
+      "[aria-label=\"Add a caption...\"]",
+      "[role=\"dialog\"] [role=\"textbox\"]:has-text(\"Te\")",
+      "[role=\"textbox\"]:has-text(\"Te\")",
+      "[role=\"dialog\"] div:has-text(\"Te\")",
+      "div:has-text(\"Te\")"
+    ],
+    "target": null,
+    "variable": "content"
+  },
+  {
+    "type": "click",
+    "description": "Click \"Share\"",
+    "selectors": [
+      "[role=\"dialog\"] [role=\"button\"]:has-text(\"Share\")",
+      "[role=\"button\"]:has-text(\"Share\")",
+      "[role=\"dialog\"] div:has-text(\"Share\")",
+      "div:has-text(\"Share\")"
+    ],
+    "target": null,
+    "variable": null
+  },
+  {
+    "type": "click",
+    "description": "Click \"Done\"",
+    "selectors": [
+      "[role=\"dialog\"] [role=\"button\"]:has-text(\"Done\")",
+      "[role=\"button\"]:has-text(\"Done\")",
+      "[role=\"dialog\"] div:has-text(\"Done\")",
+      "div:has-text(\"Done\")"
+    ],
+    "target": null,
+    "variable": null,
+    "optional": true
+  }
+]

@@ -1,6 +1,6 @@
 import sys
-from pathlib import Path
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 
@@ -15,9 +15,9 @@ if str(SRC_DIR) not in sys.path:
 # ---------------------------------------------------------
 # 2. Application Imports
 # ---------------------------------------------------------
+import app.db.all_models  # noqa: F401 - registers all module models
 from app.core.config import settings
 from app.db.base import Base
-import app.db.all_models  # noqa: F401 - registers all module models
 from app.db.session import engine as app_engine
 
 # Interpret the config file for Python logging.

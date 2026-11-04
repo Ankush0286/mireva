@@ -287,3 +287,23 @@ class CampaignService:
         self.db.commit()
         self.db.refresh(post)
         return post
+
+    def list_posts(
+        self,
+        status: PostStatus | None = None,
+        statuses: list[PostStatus] | None = None,
+        campaign_id: UUID | None = None,
+        limit: int = 50,
+    ) -> list[ScheduledPost]:
+        """Query posts filtered by status (e.g. DRAFT, SCHEDULED), list of statuses, or campaign."""
+        query = self.db.query(ScheduledPost).order_by(ScheduledPost.created_at.desc())
+
+        if status is not None:
+            query = query.filter(ScheduledPost.status == status)
+        elif statuses is not None:
+            query = query.filter(ScheduledPost.status.in_(statuses))
+
+        if campaign_id is not None:
+            query = query.filter(ScheduledPost.campaign_id == campaign_id)
+
+        return query.limit(limit).all()

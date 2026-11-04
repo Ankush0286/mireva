@@ -90,7 +90,8 @@ async def test_stream_agent_turn_persists_streamed_response(db_session: Session)
         user_prompt="Stream a viral hook",
         model_override=deterministic_model,
     ):
-        chunks.append(token)
+        if isinstance(token, str):
+            chunks.append(token)
 
     full_text = "".join(chunks)
     assert "Streaming viral hook 1, 2, 3!" in full_text

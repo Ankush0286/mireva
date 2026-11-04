@@ -93,8 +93,13 @@ async def create_stealth_context(
     Creates a persistent Chrome browser context hardened against bot detection.
     Persists cookies, indexedDB, and local storage inside user_data_dir.
     """
+    import json
+
     user_data_path = Path(user_data_dir).resolve()
     user_data_path.mkdir(parents=True, exist_ok=True)
+
+    # Remove storage_state if passed in kwargs since launch_persistent_context does not accept it
+    kwargs.pop("storage_state", None)
 
     context_kwargs: dict[str, Any] = {
         "user_data_dir": str(user_data_path),
@@ -108,11 +113,17 @@ async def create_stealth_context(
         **kwargs,
     }
 
-    if storage_state_path and Path(storage_state_path).exists():
-        context_kwargs["storage_state"] = str(storage_state_path)
-
     logger.debug("Launching stealth persistent context at %s (headless=%s)", user_data_path, headless)
     context = await playwright.chromium.launch_persistent_context(**context_kwargs)
+
+    # Restore cookies from storage_state.json if present
+    if storage_state_path and Path(storage_state_path).exists():
+        try:
+            state_data = json.loads(Path(storage_state_path).read_text(encoding="utf-8"))
+            if cookies := state_data.get("cookies"):
+                await context.add_cookies(cookies)
+        except Exception as exc:
+            logger.warning("Could not restore cookies from %s: %s", storage_state_path, exc)
 
     # Automatically apply stealth script to all current and future tabs/pages
     await context.add_init_script(STEALTH_INIT_SCRIPT)

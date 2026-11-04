@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -153,3 +154,30 @@ def test_record_dm_activity(db_session: Session):
     service.record_dm_activity(account.id)
     assert account.daily_dms_sent == 1
     assert account.last_action_at is not None
+
+def test_mark_browser_session_authenticated(db_session: Session):
+    service = AccountService(db_session)
+    account = service.create_account(
+        CreateAccountCommand(platform=PlatformType.INSTAGRAM, handle="session_tester")
+    )
+    assert account.has_valid_browser_session is False
+    assert account.last_browser_login_at is None
+    assert account.browser_storage_path is None
+
+    # 1. Update using a Path object
+    storage_path = Path("storage/browser_sessions/test_id/storage_state.json")
+    updated = service.mark_browser_session_authenticated(account.id, storage_path)
+
+    assert updated.has_valid_browser_session is True
+    assert updated.last_browser_login_at is not None
+    assert updated.browser_storage_path == str(storage_path)
+
+    # 2. Update using a str object
+    updated2 = service.mark_browser_session_authenticated(account.id, "storage/new_path.json")
+    assert updated2.browser_storage_path == "storage/new_path.json"
+
+
+def test_mark_browser_session_authenticated_not_found_raises(db_session: Session):
+    service = AccountService(db_session)
+    with pytest.raises(AccountNotFoundError):
+        service.mark_browser_session_authenticated(uuid4(), "dummy/path.json")

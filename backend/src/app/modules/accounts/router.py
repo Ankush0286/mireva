@@ -1,6 +1,14 @@
+import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.db.dependencies import get_db_session
@@ -11,6 +19,7 @@ from app.modules.accounts.schemas import (
 )
 from app.modules.accounts.service import AccountService
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -89,3 +98,25 @@ def delete_account(
     service: AccountService = Depends(get_account_service),
 ) -> None:
     service.delete_account(account_id)
+
+
+@router.websocket("/{account_id}/session/ws")
+async def account_session_auth_stream(
+    websocket: WebSocket,
+    account_id: UUID,
+    service: AccountService = Depends(get_account_service),
+):
+    """
+    WebSocket transport endpoint delegating session authentication to AccountService.
+    """
+    await websocket.accept()
+    try:
+        await service.run_session_authentication_stream(account_id, websocket)
+    except WebSocketDisconnect:
+        logger.debug("Client disconnected from account session stream: %s", account_id)
+    except Exception as exc:
+        logger.error("Error in account session stream for %s: %s", account_id, exc, exc_info=True)
+        try:
+            await websocket.close()
+        except Exception:
+            pass

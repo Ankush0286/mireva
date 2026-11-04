@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   Home,
+  Users2,
+  Sliders,
   Megaphone,
   Layers,
   Search,
@@ -18,6 +20,8 @@ import { api, type ChatSession, type Account } from '../api/client';
 
 export type SidebarTab =
   | 'overview'
+  | 'accounts'
+  | 'studio'
   | 'campaigns'
   | 'social'
   | 'seo'
@@ -45,7 +49,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse: externalToggle,
 }) => {
   const [internalCollapsed, setInternalCollapsed] = useState(false);
-  const isCollapsed = externalCollapsed !== undefined ? externalCollapsed : internalCollapsed;
+  const isCollapsed =
+    externalCollapsed !== undefined ? externalCollapsed : internalCollapsed;
 
   const handleToggleCollapse = () => {
     if (externalToggle) {
@@ -59,33 +64,57 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [account, setAccount] = useState<Account | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const loadSidebarData = async () => {
-    setLoading(true);
-    try {
-      const [realSessions, realAccounts] = await Promise.allSettled([
-        api.copilot.listSessions(),
-        api.accounts.list(),
-      ]);
+  // Synchronize data without calling synchronous setState in useEffect
+  useEffect(() => {
+    let isMounted = true;
 
+    Promise.allSettled([
+      api.copilot.listSessions(),
+      api.accounts.list(false),
+    ]).then(([realSessions, realAccounts]) => {
+      if (!isMounted) return;
       if (realSessions.status === 'fulfilled') {
         setSessions(realSessions.value);
       }
-      if (realAccounts.status === 'fulfilled' && realAccounts.value.length > 0) {
-        setAccount(realAccounts.value[0]);
+      if (realAccounts.status === 'fulfilled') {
+        setAccount(realAccounts.value.length > 0 ? realAccounts.value[0] : null);
       }
-    } catch (err) {
-      console.error('Failed to load sidebar data:', err);
-    } finally {
-      setLoading(false);
-    }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeTab, selectedSessionId]);
+
+  // Event handler for explicit user refresh action
+  const handleManualRefresh = () => {
+    setLoading(true);
+    Promise.allSettled([
+      api.copilot.listSessions(),
+      api.accounts.list(false),
+    ])
+      .then(([realSessions, realAccounts]) => {
+        if (realSessions.status === 'fulfilled') {
+          setSessions(realSessions.value);
+        }
+        if (realAccounts.status === 'fulfilled') {
+          setAccount(realAccounts.value.length > 0 ? realAccounts.value[0] : null);
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        setLoading(false);
+      });
   };
 
-  useEffect(() => {
-    loadSidebarData();
-  }, []);
-
-  const navItems: Array<{ id: SidebarTab; label: string; icon: React.ElementType }> = [
+  const navItems: Array<{
+    id: SidebarTab;
+    label: string;
+    icon: React.ElementType;
+  }> = [
     { id: 'overview', label: 'Overview', icon: Home },
+    { id: 'accounts', label: 'Accounts', icon: Users2 },
+    { id: 'studio', label: 'Workflows', icon: Sliders },
     { id: 'campaigns', label: 'Campaigns', icon: Megaphone },
     { id: 'social', label: 'Social Content', icon: Layers },
     { id: 'seo', label: 'SEO', icon: Search },
@@ -93,14 +122,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'brand', label: 'Brand Kit', icon: BookOpen },
   ];
 
+  const avatarInitial = account?.handle
+    ? account.handle.replace(/^@+/, '').slice(0, 1).toUpperCase()
+    : 'A';
+
   return (
     <aside
       className={`fixed left-0 top-0 bottom-0 z-40 flex flex-col justify-between bg-white border-r border-[#DCE7F5] select-none rounded-none text-[#09122A] overflow-hidden transition-[width] duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
-        isCollapsed ? 'w-16 shadow-xs' : 'w-60 shadow-[4px_0_20px_-4px_rgba(14,58,117,0.05)]'
+        isCollapsed
+          ? 'w-16 shadow-xs'
+          : 'w-60 shadow-[4px_0_20px_-4px_rgba(14,58,117,0.05)]'
       }`}
     >
       {/* ===================================================================== */}
-      {/* TOP SECTION: Header & Navigation                                      */}
+      {/* 1. TOP SECTION: Header, New Chat & Primary Navigation                 */}
       {/* ===================================================================== */}
       <div className="flex flex-col flex-1 overflow-hidden">
         {/* Brand Header */}
@@ -108,11 +143,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* Logo & Brand Name */}
           <div
             className={`flex items-center gap-2 overflow-hidden whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
-              isCollapsed ? 'max-w-0 opacity-0 pointer-events-none' : 'max-w-[140px] opacity-100'
+              isCollapsed
+                ? 'max-w-0 opacity-0 pointer-events-none'
+                : 'max-w-[140px] opacity-100'
             }`}
           >
             <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" className="rotate-12">
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                className="rotate-12"
+              >
                 <rect x="3.5" y="4" width="5.5" height="15" rx="2.75" fill="#2563EB" />
                 <rect x="13.5" y="4" width="5.5" height="15" rx="2.75" fill="#60A5FA" />
               </svg>
@@ -130,13 +173,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <button
               type="button"
-              onClick={loadSidebarData}
+              onClick={handleManualRefresh}
               title="Refresh database"
               className={`rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-all duration-200 cursor-pointer overflow-hidden ${
-                isCollapsed ? 'w-0 h-0 opacity-0 pointer-events-none p-0' : 'w-7 h-7 opacity-100'
+                isCollapsed
+                  ? 'w-0 h-0 opacity-0 pointer-events-none p-0'
+                  : 'w-7 h-7 opacity-100'
               }`}
             >
-              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+              <RefreshCw size={13} className={loading ? 'animate-spin text-[#0E3A75]' : ''} />
             </button>
 
             <button
@@ -153,23 +198,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* New Chat Primary Tab */}
-        <div className="px-3 pt-3 pb-2 shrink-0">
+        <div className="px-3 pt-2.5 pb-1.5 shrink-0">
           <button
             type="button"
             onClick={onNewChat}
             title="New Chat"
-            className="w-full flex items-center h-10 rounded-xl bg-[#EBF3FC] hover:bg-[#DDEBFA] text-[#0E3A75] border border-[#D0E2F7] shadow-2xs transition-colors cursor-pointer overflow-hidden active:scale-95"
+            className="w-full flex items-center h-9.5 rounded-xl bg-[#EBF3FC] hover:bg-[#DDEBFA] text-[#0E3A75] border border-[#D0E2F7] shadow-2xs transition-colors cursor-pointer overflow-hidden active:scale-95"
           >
-            <div className="w-10 h-10 shrink-0 flex items-center justify-center">
-              <Plus size={18} strokeWidth={2.4} />
+            <div className="w-10 h-9.5 shrink-0 flex items-center justify-center">
+              <Plus size={17} strokeWidth={2.4} />
             </div>
 
             <div
               className={`flex items-center justify-between flex-1 overflow-hidden whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] pr-3 ${
-                isCollapsed ? 'max-w-0 opacity-0 pointer-events-none' : 'max-w-[150px] opacity-100'
+                isCollapsed
+                  ? 'max-w-0 opacity-0 pointer-events-none'
+                  : 'max-w-[150px] opacity-100'
               }`}
             >
-              <span className="text-[12.5px] font-semibold whitespace-nowrap">New Chat</span>
+              <span className="text-[12.5px] font-semibold whitespace-nowrap">
+                New Chat
+              </span>
               <span className="text-[9.5px] uppercase font-bold text-blue-700 bg-white px-1.5 py-0.2 rounded-full ml-2 shrink-0">
                 AI
               </span>
@@ -178,7 +227,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Primary Navigation Tabs */}
-        <div className="px-3 py-1 space-y-1 shrink-0">
+        <div className="px-3 py-1 space-y-0.5 shrink-0">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -188,22 +237,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 type="button"
                 onClick={() => onSelectTab(item.id)}
                 title={isCollapsed ? item.label : undefined}
-                className={`w-full flex items-center h-10 rounded-xl transition-colors duration-150 cursor-pointer overflow-hidden ${
+                className={`w-full flex items-center h-9 rounded-xl transition-colors duration-150 cursor-pointer overflow-hidden ${
                   isActive
                     ? 'bg-[#EBF3FC] text-[#0E3A75] shadow-2xs font-bold'
                     : 'text-slate-600 hover:text-[#09122A] hover:bg-slate-50 font-semibold'
                 }`}
               >
-                <div className="w-10 h-10 shrink-0 flex items-center justify-center">
+                <div className="w-10 h-9 shrink-0 flex items-center justify-center">
                   <Icon
-                    size={17}
+                    size={16}
                     strokeWidth={isActive ? 2.3 : 1.9}
                     className={isActive ? 'text-[#0E3A75]' : 'text-slate-500'}
                   />
                 </div>
                 <span
                   className={`text-[12.5px] whitespace-nowrap overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
-                    isCollapsed ? 'max-w-0 opacity-0 pointer-events-none' : 'max-w-[140px] opacity-100 ml-1'
+                    isCollapsed
+                      ? 'max-w-0 opacity-0 pointer-events-none'
+                      : 'max-w-[140px] opacity-100 ml-1'
                   }`}
                 >
                   {item.label}
@@ -213,7 +264,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           })}
         </div>
 
-        <div className="mx-4 my-1.5 border-b border-[#F0F5FA] shrink-0" />
+        <div className="mx-4 my-1 border-b border-[#F0F5FA] shrink-0" />
 
         {/* Settings Tab */}
         <div className="px-3 shrink-0">
@@ -221,18 +272,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
             type="button"
             onClick={() => onSelectTab('settings')}
             title={isCollapsed ? 'Settings' : undefined}
-            className={`w-full flex items-center h-10 rounded-xl transition-colors duration-150 cursor-pointer overflow-hidden ${
+            className={`w-full flex items-center h-9 rounded-xl transition-colors duration-150 cursor-pointer overflow-hidden ${
               activeTab === 'settings'
-                ? 'bg-[#EBF3FC] text-[#0E3A75] shadow-2xs'
-                : 'text-slate-600 hover:text-[#09122A] hover:bg-slate-50'
+                ? 'bg-[#EBF3FC] text-[#0E3A75] shadow-2xs font-bold'
+                : 'text-slate-600 hover:text-[#09122A] hover:bg-slate-50 font-semibold'
             }`}
           >
-            <div className="w-10 h-10 shrink-0 flex items-center justify-center">
-              <Settings size={17} strokeWidth={1.9} className="text-slate-500" />
+            <div className="w-10 h-9 shrink-0 flex items-center justify-center">
+              <Settings
+                size={16}
+                strokeWidth={activeTab === 'settings' ? 2.3 : 1.9}
+                className={activeTab === 'settings' ? 'text-[#0E3A75]' : 'text-slate-500'}
+              />
             </div>
             <span
-              className={`text-[12.5px] font-semibold whitespace-nowrap overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
-                isCollapsed ? 'max-w-0 opacity-0 pointer-events-none' : 'max-w-[140px] opacity-100 ml-1'
+              className={`text-[12.5px] whitespace-nowrap overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
+                isCollapsed
+                  ? 'max-w-0 opacity-0 pointer-events-none'
+                  : 'max-w-[140px] opacity-100 ml-1'
               }`}
             >
               Settings
@@ -241,7 +298,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* ===================================================================== */}
-        {/* CHATS SECTION                                                         */}
+        {/* 2. CHATS SECTION: Real Database Sessions                              */}
         {/* ===================================================================== */}
         <div
           className={`flex-1 overflow-y-auto px-3 pt-2 pb-1 scrollbar-none transition-all duration-300 overflow-hidden ${
@@ -290,11 +347,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* ===================================================================== */}
-      {/* BOTTOM SECTION: Grass & User Profile                                  */}
+      {/* 3. BOTTOM SECTION: Grass Background & User Profile Card               */}
       {/* ===================================================================== */}
       <div className="relative w-full shrink-0 overflow-hidden">
         <div className="relative h-44 w-full overflow-hidden">
-          {/* Grass illustration anchored to bottom-left */}
           <img
             src="/sidebar-grass.png"
             alt="Meadow grass"
@@ -302,51 +358,56 @@ export const Sidebar: React.FC<SidebarProps> = ({
               (e.target as HTMLElement).style.display = 'none';
             }}
             className="absolute bottom-0 left-0 w-60 min-w-[240px] max-w-none h-44 object-cover object-left-bottom pointer-events-none select-none opacity-100"
-            style={{
-              imageRendering: 'pixelated',
-            }}
+            style={{ imageRendering: 'pixelated' }}
           />
 
-          {/* User Profile Card */}
           <div className="absolute bottom-3 inset-x-3 z-10 flex justify-center">
-            <div
-              className={`flex items-center bg-white border border-[#DCE7F5] rounded-xl shadow-xs transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] overflow-hidden ${
-                isCollapsed ? 'w-10 h-10 p-0 justify-center' : 'w-full h-11 px-2.5'
+            <button
+              type="button"
+              onClick={() => onSelectTab('accounts')}
+              title="Manage Connected Accounts"
+              className={`flex items-center bg-white hover:bg-slate-50/95 border border-[#DCE7F5] rounded-xl shadow-xs transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] overflow-hidden cursor-pointer ${
+                isCollapsed
+                  ? 'w-10 h-10 p-0 justify-center'
+                  : 'w-full h-11 px-2.5'
               }`}
             >
-              {/* Avatar Slot: centered in 40px square in collapsed mode */}
               <div className="w-10 h-10 flex items-center justify-center shrink-0">
                 <div className="w-7 h-7 rounded-full bg-blue-100 text-[#0E3A75] flex items-center justify-center font-bold text-xs shrink-0">
-                  {account?.handle ? account.handle.slice(0, 1).toUpperCase() : 'A'}
+                  {avatarInitial}
                 </div>
               </div>
 
-              {/* Name & Email: flex-1 left-aligned snug against avatar */}
               <div
                 className={`overflow-hidden text-left transition-all duration-300 whitespace-nowrap min-w-0 flex-1 ${
-                  isCollapsed ? 'max-w-0 opacity-0 pointer-events-none ml-0' : 'opacity-100 ml-1.5'
+                  isCollapsed
+                    ? 'max-w-0 opacity-0 pointer-events-none ml-0'
+                    : 'opacity-100 ml-1.5'
                 }`}
               >
                 <span className="block text-xs font-bold text-[#09122A] truncate leading-tight text-left">
                   {account?.display_name || account?.handle || 'Alex'}
                 </span>
                 <span className="block text-[10.5px] text-slate-400 truncate text-left mt-0.5">
-                  {account?.handle ? `@${account.handle}` : 'alex@example.com'}
+                  {account?.handle ? `@${account.handle}` : 'Connect an account'}
                 </span>
               </div>
 
-              {/* Chevron Down pushed to the far right with ml-auto */}
               <div
                 className={`overflow-hidden transition-all duration-300 shrink-0 ml-auto ${
-                  isCollapsed ? 'max-w-0 opacity-0 pointer-events-none' : 'max-w-4 opacity-100'
+                  isCollapsed
+                    ? 'max-w-0 opacity-0 pointer-events-none'
+                    : 'max-w-4 opacity-100'
                 }`}
               >
                 <ChevronDown size={13} className="text-slate-400" />
               </div>
-            </div>
+            </button>
           </div>
         </div>
       </div>
     </aside>
   );
 };
+
+export default Sidebar;
