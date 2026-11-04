@@ -3,6 +3,7 @@ import { Sidebar, type SidebarTab } from '../../components/Sidebar';
 import { ChatPage } from '../chat/ChatPage';
 import { AccountsPage } from '../accounts/AccountsPage';
 import { ActionStudioPage } from '../studio/ActionStudioPage';
+import { CampaignsPage } from '../campaigns/CampaignsPage'; // <-- 1. Import
 import { type ChatSession } from '../../api/client';
 import { type ActiveView } from '../../components/Navbar';
 
@@ -15,6 +16,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ initialTab }) => {
   const [activeTab, setActiveTab] = useState<SidebarTab>(() => {
     if (initialTab === 'accounts') return 'accounts';
     if ((initialTab as string) === 'studio') return 'studio';
+    if (initialTab === 'campaigns') return 'campaigns';
     return 'overview';
   });
 
@@ -71,6 +73,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ initialTab }) => {
             <AccountsPage />
           ) : activeTab === 'studio' ? (
             <ActionStudioPage />
+          ) : activeTab === 'campaigns' || activeTab === 'social' ? (
+            <CampaignsPage initialView={activeTab === 'social' ? 'posts' : 'campaigns'} />
           ) : (
             <ChatPage
               sessionId={selectedSessionId}
