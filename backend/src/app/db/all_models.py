@@ -1,5 +1,6 @@
 from app.db.base import Base
 from app.modules.accounts.models import ConnectedAccount
+from app.modules.brand.models import BrandKit
 from app.modules.campaigns.models import Campaign, ScheduledPost
 from app.modules.connectors.models import DataConnector
 from app.modules.copilot.models import ChatMessage, ChatSession, ToolExecutionLog
@@ -24,5 +25,6 @@ __all__ = [
     "ChatMessage",
     "ToolExecutionLog",
     "ActionRecipe",
-    "DataConnector"
+    "DataConnector",
+    "BrandKit"
 ]

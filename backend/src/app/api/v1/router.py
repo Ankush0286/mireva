@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.modules.accounts.router import router as accounts_router
+from app.modules.brand.router import router as brand_router
 from app.modules.campaigns.router import router as campaigns_router
 from app.modules.connectors.router import router as connectors_router
 from app.modules.copilot.router import router as copilot_router
@@ -57,4 +58,10 @@ api_v1_router.include_router(
     connectors_router,
     prefix="/connectors",
     tags=["Connectors"],
+)
+
+api_v1_router.include_router(
+    brand_router,
+    prefix="/brand",
+    tags=["Brand Kit"],
 )

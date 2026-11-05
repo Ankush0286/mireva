@@ -71,6 +71,40 @@ async def test_run_agent_turn_calls_tools_and_logs_traces(db_session: Session):
 
 
 @pytest.mark.anyio
+async def test_run_agent_turn_calls_brand_knowledge_tool(db_session: Session):
+    """
+    Verifies autonomous brand discovery:
+    1. Agent invokes `get_brand_knowledge` on demand.
+    2. Tool trace is logged in `tool_execution_logs`.
+    3. Assistant message response contains brand knowledge.
+    """
+    copilot_service = CopilotService(db_session)
+    session = copilot_service.create_session(
+        CreateChatSessionCommand(title="Brand Knowledge Audit")
+    )
+
+    deterministic_model = TestModel(
+        call_tools=["get_brand_knowledge"],
+        custom_output_text="Orlume is an AI Website Builder with a punchy, founder-led voice targeting solo founders.",
+    )
+
+    assistant_msg = await run_agent_turn(
+        db=db_session,
+        session_id=session.id,
+        user_prompt="What is our brand positioning and voice?",
+        model_override=deterministic_model,
+    )
+
+    assert assistant_msg.id is not None
+    assert "Orlume" in assistant_msg.content
+
+    # Verify tool execution trace
+    tool_traces = copilot_service.list_tool_executions(session.id)
+    assert len(tool_traces) >= 1
+    assert tool_traces[0].tool_name == "get_brand_knowledge"
+
+
+@pytest.mark.anyio
 async def test_stream_agent_turn_persists_streamed_response(db_session: Session):
     """Verifies that streaming token generation yields chunks and saves the final reply."""
     copilot_service = CopilotService(db_session)

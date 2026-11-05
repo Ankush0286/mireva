@@ -1,4 +1,5 @@
 from app.agent.tools.account_tools import check_account_health, get_connected_accounts
+from app.agent.tools.brand_tools import get_brand_knowledge
 from app.agent.tools.campaign_tools import (
     draft_campaign,
     list_pending_posts,
@@ -35,4 +36,5 @@ __all__ = [
     "list_marketing_data_sources",
     "get_search_console_opportunities",
     "get_competitor_keyword_gaps",
+    "get_brand_knowledge"
 ]

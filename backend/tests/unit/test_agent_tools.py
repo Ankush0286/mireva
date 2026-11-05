@@ -1,8 +1,9 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.agent.llm import AgentDeps
@@ -10,10 +11,16 @@ from app.agent.tools.account_tools import (
     check_account_health,
     get_connected_accounts,
 )
+from app.agent.tools.brand_tools import get_brand_knowledge
 from app.agent.tools.campaign_tools import (
     draft_campaign,
     list_pending_posts,
     queue_social_post,
+)
+from app.agent.tools.connector_tools import (
+    get_competitor_keyword_gaps,
+    get_search_console_opportunities,
+    list_marketing_data_sources,
 )
 from app.agent.tools.outreach_tools import (
     add_lead_to_crm,
@@ -25,9 +32,12 @@ from app.agent.tools.trigger_tools import (
     create_keyword_trigger_rule,
     review_intercepted_match,
 )
-from app.common.enums import PlatformType
+from app.common.enums import ConnectorType, PlatformType
 from app.modules.accounts.commands import CreateAccountCommand
 from app.modules.accounts.service import AccountService
+from app.modules.connectors.commands import CreateConnectorCommand
+from app.modules.connectors.schemas import MetricOpportunityItem
+from app.modules.connectors.service import ConnectorService
 
 
 def _make_run_context(db_session: Session) -> Any:
@@ -224,3 +234,88 @@ def test_outreach_tools_execution_and_error_handling(db_session: Session):
         handle="tech_creator",
     )
     assert "error" in dup_err
+
+
+# =============================================================================
+# Brand Tools Unit Tests
+# =============================================================================
+
+
+def test_brand_tools_execution(db_session: Session):
+    ctx = _make_run_context(db_session)
+
+    # 1. Query full brand knowledge (auto-seeds default Orlume kit)
+    knowledge = get_brand_knowledge(ctx)
+    assert knowledge["brand_name"] == "Orlume"
+    assert "https://orlume.site" in knowledge["website_url"]
+    assert "punchy" in knowledge["tone_traits"]
+    assert "delve" in knowledge["banned_words_never_use"]
+    assert len(knowledge["target_personas"]) >= 1
+
+    # 2. Query specific section: tone & voice
+    tone_sec = get_brand_knowledge(ctx, section="tone")
+    assert "tone_traits" in tone_sec
+    assert "banned_words_never_use" in tone_sec
+    assert "target_personas" not in tone_sec
+
+    # 3. Query specific section: personas
+    personas_sec = get_brand_knowledge(ctx, section="personas")
+    assert "target_personas" in personas_sec
+    assert "tone_traits" not in personas_sec
+
+
+# =============================================================================
+# Data Connector Tools Unit Tests
+# =============================================================================
+
+
+@pytest.mark.anyio
+async def test_connector_tools_execution_and_warnings(db_session: Session):
+    ctx = _make_run_context(db_session)
+    conn_service = ConnectorService(db_session)
+
+    # 1. List data sources on empty DB
+    empty_sources = await list_marketing_data_sources(ctx)
+    assert len(empty_sources) == 0
+
+    # 2. Warning on query with no active connectors configured
+    no_gsc = await get_search_console_opportunities(ctx)
+    assert "warning" in no_gsc[0]
+
+    no_ahrefs = await get_competitor_keyword_gaps(ctx)
+    assert "warning" in no_ahrefs[0]
+
+    # 3. Register GSC connector and query opportunities via mock
+    conn_service.create_connector(
+        CreateConnectorCommand(
+            name="GSC Production",
+            connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE,
+            target_identifier="https://orlume.site",
+            refresh_token="tok_123",
+        )
+    )
+
+    sources = await list_marketing_data_sources(ctx)
+    assert len(sources) == 1
+    assert sources[0]["name"] == "GSC Production"
+
+    mock_opps = [
+        MetricOpportunityItem(
+            query="ai landing page builder",
+            page_url="https://orlume.site/builder",
+            impressions=1800,
+            clicks=62,
+            ctr=0.034,
+            position=6.2,
+            opportunity_type="striking_distance",
+            score=79.5,
+        )
+    ]
+
+    with patch("app.modules.connectors.service.ConnectorService.fetch_opportunities", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = mock_opps
+
+        opps = await get_search_console_opportunities(ctx, min_impressions=500)
+        assert len(opps) == 1
+        assert opps[0]["query"] == "ai landing page builder"
+        assert opps[0]["score"] == 79.5
