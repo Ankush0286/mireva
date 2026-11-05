@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   Home,
   Users2,
-  Sliders,
+  Database,
   Megaphone,
-  Layers,
-  Search,
-  BarChart2,
-  BookOpen,
+  Radio,
+  Send,
+  Sliders,
+  History,
   Settings,
   Plus,
   MessageSquare,
@@ -15,19 +15,19 @@ import {
   RefreshCw,
   PanelLeftClose,
   PanelLeft,
-} from 'lucide-react';
-import { api, type ChatSession, type Account } from '../api/client';
+} from "lucide-react";
+import { api, type ChatSession, type Account } from "../api/client";
 
 export type SidebarTab =
-  | 'overview'
-  | 'accounts'
-  | 'studio'
-  | 'campaigns'
-  | 'social'
-  | 'seo'
-  | 'analytics'
-  | 'brand'
-  | 'settings';
+  | "overview"
+  | "accounts"
+  | "connectors"
+  | "campaigns"
+  | "studio"
+  | "triggers"
+  | "outreach"
+  | "history"
+  | "settings";
 
 interface SidebarProps {
   activeTab: SidebarTab;
@@ -73,11 +73,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       api.accounts.list(false),
     ]).then(([realSessions, realAccounts]) => {
       if (!isMounted) return;
-      if (realSessions.status === 'fulfilled') {
+      if (realSessions.status === "fulfilled") {
         setSessions(realSessions.value);
       }
-      if (realAccounts.status === 'fulfilled') {
-        setAccount(realAccounts.value.length > 0 ? realAccounts.value[0] : null);
+      if (realAccounts.status === "fulfilled") {
+        setAccount(
+          realAccounts.value.length > 0 ? realAccounts.value[0] : null,
+        );
       }
     });
 
@@ -89,16 +91,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Event handler for explicit user refresh action
   const handleManualRefresh = () => {
     setLoading(true);
-    Promise.allSettled([
-      api.copilot.listSessions(),
-      api.accounts.list(false),
-    ])
+    Promise.allSettled([api.copilot.listSessions(), api.accounts.list(false)])
       .then(([realSessions, realAccounts]) => {
-        if (realSessions.status === 'fulfilled') {
+        if (realSessions.status === "fulfilled") {
           setSessions(realSessions.value);
         }
-        if (realAccounts.status === 'fulfilled') {
-          setAccount(realAccounts.value.length > 0 ? realAccounts.value[0] : null);
+        if (realAccounts.status === "fulfilled") {
+          setAccount(
+            realAccounts.value.length > 0 ? realAccounts.value[0] : null,
+          );
         }
         setLoading(false);
       })
@@ -112,26 +113,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
     label: string;
     icon: React.ElementType;
   }> = [
-    { id: 'overview', label: 'Overview', icon: Home },
-    { id: 'accounts', label: 'Accounts', icon: Users2 },
-    { id: 'studio', label: 'Workflows', icon: Sliders },
-    { id: 'campaigns', label: 'Campaigns', icon: Megaphone },
-    { id: 'social', label: 'Social Content', icon: Layers },
-    { id: 'seo', label: 'SEO', icon: Search },
-    { id: 'analytics', label: 'Analytics', icon: BarChart2 },
-    { id: 'brand', label: 'Brand Kit', icon: BookOpen },
+    { id: "overview", label: "Overview", icon: Home },
+    { id: "accounts", label: "Accounts", icon: Users2 },
+    { id: "connectors", label: "Data Sources", icon: Database },
+    { id: "campaigns", label: "Campaigns", icon: Megaphone },
+    { id: "triggers", label: "Triggers Radar", icon: Radio },
+    { id: "outreach", label: "Outreach CRM", icon: Send },
+    { id: "studio", label: "Workflows", icon: Sliders },
+    { id: "history", label: "Audit Trail", icon: History },
   ];
 
   const avatarInitial = account?.handle
-    ? account.handle.replace(/^@+/, '').slice(0, 1).toUpperCase()
-    : 'A';
+    ? account.handle.replace(/^@+/, "").slice(0, 1).toUpperCase()
+    : "A";
 
   return (
     <aside
       className={`fixed left-0 top-0 bottom-0 z-40 flex flex-col justify-between bg-white border-r border-[#DCE7F5] select-none rounded-none text-[#09122A] overflow-hidden transition-[width] duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
         isCollapsed
-          ? 'w-16 shadow-xs'
-          : 'w-60 shadow-[4px_0_20px_-4px_rgba(14,58,117,0.05)]'
+          ? "w-16 shadow-xs"
+          : "w-60 shadow-[4px_0_20px_-4px_rgba(14,58,117,0.05)]"
       }`}
     >
       {/* ===================================================================== */}
@@ -144,8 +145,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div
             className={`flex items-center gap-2 overflow-hidden whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
               isCollapsed
-                ? 'max-w-0 opacity-0 pointer-events-none'
-                : 'max-w-[140px] opacity-100'
+                ? "max-w-0 opacity-0 pointer-events-none"
+                : "max-w-[140px] opacity-100"
             }`}
           >
             <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0">
@@ -156,8 +157,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 fill="none"
                 className="rotate-12"
               >
-                <rect x="3.5" y="4" width="5.5" height="15" rx="2.75" fill="#2563EB" />
-                <rect x="13.5" y="4" width="5.5" height="15" rx="2.75" fill="#60A5FA" />
+                <rect
+                  x="3.5"
+                  y="4"
+                  width="5.5"
+                  height="15"
+                  rx="2.75"
+                  fill="#2563EB"
+                />
+                <rect
+                  x="13.5"
+                  y="4"
+                  width="5.5"
+                  height="15"
+                  rx="2.75"
+                  fill="#60A5FA"
+                />
               </svg>
             </div>
             <span className="font-bold text-[15px] tracking-tight text-[#09122A] whitespace-nowrap">
@@ -168,7 +183,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* Action Icons */}
           <div
             className={`flex items-center transition-all duration-300 ${
-              isCollapsed ? 'w-full justify-center' : 'ml-auto gap-0.5'
+              isCollapsed ? "w-full justify-center" : "ml-auto gap-0.5"
             }`}
           >
             <button
@@ -177,22 +192,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
               title="Refresh database"
               className={`rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-all duration-200 cursor-pointer overflow-hidden ${
                 isCollapsed
-                  ? 'w-0 h-0 opacity-0 pointer-events-none p-0'
-                  : 'w-7 h-7 opacity-100'
+                  ? "w-0 h-0 opacity-0 pointer-events-none p-0"
+                  : "w-7 h-7 opacity-100"
               }`}
             >
-              <RefreshCw size={13} className={loading ? 'animate-spin text-[#0E3A75]' : ''} />
+              <RefreshCw
+                size={13}
+                className={loading ? "animate-spin text-[#0E3A75]" : ""}
+              />
             </button>
 
             <button
               type="button"
               onClick={handleToggleCollapse}
-              title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
               className={`flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-all duration-200 cursor-pointer rounded-xl ${
-                isCollapsed ? 'w-10 h-10' : 'w-7 h-7'
+                isCollapsed ? "w-10 h-10" : "w-7 h-7"
               }`}
             >
-              {isCollapsed ? <PanelLeft size={18} /> : <PanelLeftClose size={16} />}
+              {isCollapsed ? (
+                <PanelLeft size={18} />
+              ) : (
+                <PanelLeftClose size={16} />
+              )}
             </button>
           </div>
         </div>
@@ -212,8 +234,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div
               className={`flex items-center justify-between flex-1 overflow-hidden whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] pr-3 ${
                 isCollapsed
-                  ? 'max-w-0 opacity-0 pointer-events-none'
-                  : 'max-w-[150px] opacity-100'
+                  ? "max-w-0 opacity-0 pointer-events-none"
+                  : "max-w-[150px] opacity-100"
               }`}
             >
               <span className="text-[12.5px] font-semibold whitespace-nowrap">
@@ -239,22 +261,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 title={isCollapsed ? item.label : undefined}
                 className={`w-full flex items-center h-9 rounded-xl transition-colors duration-150 cursor-pointer overflow-hidden ${
                   isActive
-                    ? 'bg-[#EBF3FC] text-[#0E3A75] shadow-2xs font-bold'
-                    : 'text-slate-600 hover:text-[#09122A] hover:bg-slate-50 font-semibold'
+                    ? "bg-[#EBF3FC] text-[#0E3A75] shadow-2xs font-bold"
+                    : "text-slate-600 hover:text-[#09122A] hover:bg-slate-50 font-semibold"
                 }`}
               >
                 <div className="w-10 h-9 shrink-0 flex items-center justify-center">
                   <Icon
                     size={16}
                     strokeWidth={isActive ? 2.3 : 1.9}
-                    className={isActive ? 'text-[#0E3A75]' : 'text-slate-500'}
+                    className={isActive ? "text-[#0E3A75]" : "text-slate-500"}
                   />
                 </div>
                 <span
                   className={`text-[12.5px] whitespace-nowrap overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
                     isCollapsed
-                      ? 'max-w-0 opacity-0 pointer-events-none'
-                      : 'max-w-[140px] opacity-100 ml-1'
+                      ? "max-w-0 opacity-0 pointer-events-none"
+                      : "max-w-[140px] opacity-100 ml-1"
                   }`}
                 >
                   {item.label}
@@ -270,26 +292,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="px-3 shrink-0">
           <button
             type="button"
-            onClick={() => onSelectTab('settings')}
-            title={isCollapsed ? 'Settings' : undefined}
+            onClick={() => onSelectTab("settings")}
+            title={isCollapsed ? "Settings" : undefined}
             className={`w-full flex items-center h-9 rounded-xl transition-colors duration-150 cursor-pointer overflow-hidden ${
-              activeTab === 'settings'
-                ? 'bg-[#EBF3FC] text-[#0E3A75] shadow-2xs font-bold'
-                : 'text-slate-600 hover:text-[#09122A] hover:bg-slate-50 font-semibold'
+              activeTab === "settings"
+                ? "bg-[#EBF3FC] text-[#0E3A75] shadow-2xs font-bold"
+                : "text-slate-600 hover:text-[#09122A] hover:bg-slate-50 font-semibold"
             }`}
           >
             <div className="w-10 h-9 shrink-0 flex items-center justify-center">
               <Settings
                 size={16}
-                strokeWidth={activeTab === 'settings' ? 2.3 : 1.9}
-                className={activeTab === 'settings' ? 'text-[#0E3A75]' : 'text-slate-500'}
+                strokeWidth={activeTab === "settings" ? 2.3 : 1.9}
+                className={
+                  activeTab === "settings" ? "text-[#0E3A75]" : "text-slate-500"
+                }
               />
             </div>
             <span
               className={`text-[12.5px] whitespace-nowrap overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
                 isCollapsed
-                  ? 'max-w-0 opacity-0 pointer-events-none'
-                  : 'max-w-[140px] opacity-100 ml-1'
+                  ? "max-w-0 opacity-0 pointer-events-none"
+                  : "max-w-[140px] opacity-100 ml-1"
               }`}
             >
               Settings
@@ -302,7 +326,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* ===================================================================== */}
         <div
           className={`flex-1 overflow-y-auto px-3 pt-2 pb-1 scrollbar-none transition-all duration-300 overflow-hidden ${
-            isCollapsed ? 'opacity-0 pointer-events-none max-w-0' : 'opacity-100'
+            isCollapsed
+              ? "opacity-0 pointer-events-none max-w-0"
+              : "opacity-100"
           }`}
         >
           <div className="flex items-center justify-between px-2 mb-1 text-[10.5px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
@@ -332,12 +358,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onClick={() => onSelectSession && onSelectSession(sess.id)}
                     className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-[11.5px] transition-all cursor-pointer truncate whitespace-nowrap ${
                       isSelected
-                        ? 'bg-[#EBF3FC] text-[#0E3A75] font-semibold shadow-2xs'
-                        : 'text-slate-600 hover:bg-slate-50 hover:text-[#09122A]'
+                        ? "bg-[#EBF3FC] text-[#0E3A75] font-semibold shadow-2xs"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-[#09122A]"
                     }`}
                   >
-                    <MessageSquare size={12} className="text-slate-400 shrink-0" />
-                    <span className="truncate whitespace-nowrap">{sess.title}</span>
+                    <MessageSquare
+                      size={12}
+                      className="text-slate-400 shrink-0"
+                    />
+                    <span className="truncate whitespace-nowrap">
+                      {sess.title}
+                    </span>
                   </button>
                 );
               })}
@@ -355,21 +386,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
             src="/sidebar-grass.png"
             alt="Meadow grass"
             onError={(e) => {
-              (e.target as HTMLElement).style.display = 'none';
+              (e.target as HTMLElement).style.display = "none";
             }}
             className="absolute bottom-0 left-0 w-60 min-w-[240px] max-w-none h-44 object-cover object-left-bottom pointer-events-none select-none opacity-100"
-            style={{ imageRendering: 'pixelated' }}
+            style={{ imageRendering: "pixelated" }}
           />
 
           <div className="absolute bottom-3 inset-x-3 z-10 flex justify-center">
             <button
               type="button"
-              onClick={() => onSelectTab('accounts')}
+              onClick={() => onSelectTab("accounts")}
               title="Manage Connected Accounts"
               className={`flex items-center bg-white hover:bg-slate-50/95 border border-[#DCE7F5] rounded-xl shadow-xs transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] overflow-hidden cursor-pointer ${
                 isCollapsed
-                  ? 'w-10 h-10 p-0 justify-center'
-                  : 'w-full h-11 px-2.5'
+                  ? "w-10 h-10 p-0 justify-center"
+                  : "w-full h-11 px-2.5"
               }`}
             >
               <div className="w-10 h-10 flex items-center justify-center shrink-0">
@@ -381,23 +412,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div
                 className={`overflow-hidden text-left transition-all duration-300 whitespace-nowrap min-w-0 flex-1 ${
                   isCollapsed
-                    ? 'max-w-0 opacity-0 pointer-events-none ml-0'
-                    : 'opacity-100 ml-1.5'
+                    ? "max-w-0 opacity-0 pointer-events-none ml-0"
+                    : "opacity-100 ml-1.5"
                 }`}
               >
                 <span className="block text-xs font-bold text-[#09122A] truncate leading-tight text-left">
-                  {account?.display_name || account?.handle || 'Alex'}
+                  {account?.display_name || account?.handle || "Alex"}
                 </span>
                 <span className="block text-[10.5px] text-slate-400 truncate text-left mt-0.5">
-                  {account?.handle ? `@${account.handle}` : 'Connect an account'}
+                  {account?.handle
+                    ? `@${account.handle}`
+                    : "Connect an account"}
                 </span>
               </div>
 
               <div
                 className={`overflow-hidden transition-all duration-300 shrink-0 ml-auto ${
                   isCollapsed
-                    ? 'max-w-0 opacity-0 pointer-events-none'
-                    : 'max-w-4 opacity-100'
+                    ? "max-w-0 opacity-0 pointer-events-none"
+                    : "max-w-4 opacity-100"
                 }`}
               >
                 <ChevronDown size={13} className="text-slate-400" />

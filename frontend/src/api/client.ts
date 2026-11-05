@@ -2,32 +2,51 @@
 // 1. Domain Types & Enums (Directly Mirroring Backend Pydantic Schemas)
 // ============================================================================
 
-export type PlatformType = 'twitter' | 'instagram' | 'facebook' | 'email';
-export type AccountStatus = 'active' | 'needs_reauth' | 'rate_limited' | 'disconnected' | 'suspended';
-export type AuthMethod = 'api_keys' | 'browser_session' | 'hybrid';
+export type PlatformType = "twitter" | "instagram" | "facebook" | "email";
+export type AccountStatus =
+  "active" | "needs_reauth" | "rate_limited" | "disconnected" | "suspended";
+export type AuthMethod = "api_keys" | "browser_session" | "hybrid";
 
-export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed' | 'archived';
-export type PostStatus = 'draft' | 'scheduled' | 'publishing' | 'published' | 'failed' | 'cancelled';
-export type PostContentType = 'text' | 'image' | 'video' | 'carousel' | 'thread';
+export type CampaignStatus =
+  "draft" | "active" | "paused" | "completed" | "archived";
+export type PostStatus =
+  "draft" | "scheduled" | "publishing" | "published" | "failed" | "cancelled";
+export type PostContentType =
+  "text" | "image" | "video" | "carousel" | "thread";
 
-export type TriggerActionType = 'auto_reply' | 'stage_draft' | 'notify_only' | 'dispatch_dm';
-export type TriggerMatchStatus = 'pending_review' | 'approved' | 'dispatched' | 'ignored' | 'failed';
+export type TriggerActionType =
+  "auto_reply" | "stage_draft" | "notify_only" | "dispatch_dm";
+export type TriggerMatchStatus =
+  "pending_review" | "approved" | "dispatched" | "ignored" | "failed";
 
 export type LeadStage =
-  | 'discovered'
-  | 'qualified'
-  | 'contacted'
-  | 'replied'
-  | 'converted'
-  | 'unresponsive'
-  | 'do_not_contact';
-export type LeadTier = 'nano' | 'micro' | 'mid' | 'macro' | 'mega';
-export type OutreachChannel = 'dm' | 'email';
-export type OutreachMessageStatus = 'draft' | 'staged' | 'approved' | 'rejected' | 'dispatched' | 'failed';
+  | "discovered"
+  | "qualified"
+  | "contacted"
+  | "replied"
+  | "converted"
+  | "unresponsive"
+  | "do_not_contact";
+export type LeadTier = "nano" | "micro" | "mid" | "macro" | "mega";
+export type OutreachChannel = "dm" | "email";
+export type OutreachMessageStatus =
+  "draft" | "staged" | "approved" | "rejected" | "dispatched" | "failed";
 
-export type ActivitySeverity = 'info' | 'success' | 'warning' | 'error';
-export type ChatRole = 'user' | 'assistant' | 'system' | 'tool';
-export type ToolExecutionStatus = 'pending' | 'success' | 'error';
+export type ActivitySeverity = "info" | "success" | "warning" | "error";
+export type ChatRole = "user" | "assistant" | "system" | "tool";
+export type ToolExecutionStatus = "pending" | "success" | "error";
+
+export type ConnectorType =
+  | "google_search_console"
+  | "ahrefs"
+  | "dataforseo"
+  | "ga4"
+  | "posthog"
+  | "stripe"
+  | "hubspot";
+
+export type ConnectorStatus =
+  "connected" | "needs_reauth" | "rate_limited" | "error" | "disabled";
 
 // ----------------- Domain Entities -----------------
 
@@ -261,6 +280,32 @@ export interface CopilotModelInfo {
   badge?: string | null;
 }
 
+export interface DataConnector {
+  id: string;
+  name: string;
+  connector_type: ConnectorType;
+  target_identifier: string;
+  status: ConnectorStatus;
+  is_active: boolean;
+  sync_frequency_minutes: number;
+  last_synced_at: string | null;
+  last_error_message: string | null;
+  extra_metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MetricOpportunityItem {
+  query: string;
+  page_url: string | null;
+  impressions: number | null;
+  clicks: number | null;
+  ctr: number | null;
+  position: number | null;
+  opportunity_type: string;
+  score: number;
+}
+
 // ============================================================================
 // 2. Custom API Error Class
 // ============================================================================
@@ -270,9 +315,14 @@ export class ApiError extends Error {
   public errorCode?: string;
   public details?: unknown;
 
-  constructor(message: string, status: number, errorCode?: string, details?: unknown) {
+  constructor(
+    message: string,
+    status: number,
+    errorCode?: string,
+    details?: unknown,
+  ) {
     super(message);
-    this.name = 'ApiError';
+    this.name = "ApiError";
     this.status = status;
     this.errorCode = errorCode;
     this.details = details;
@@ -284,23 +334,23 @@ export class ApiError extends Error {
 // ============================================================================
 
 function buildQueryString(params?: Record<string, unknown>): string {
-  if (!params) return '';
+  if (!params) return "";
   const searchParams = new URLSearchParams();
 
   for (const [key, val] of Object.entries(params)) {
-    if (val !== undefined && val !== null && val !== '') {
+    if (val !== undefined && val !== null && val !== "") {
       searchParams.append(key, String(val));
     }
   }
 
   const query = searchParams.toString();
-  return query ? `?${query}` : '';
+  return query ? `?${query}` : "";
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers);
-  if (!headers.has('Content-Type') && !(options?.body instanceof FormData)) {
-    headers.set('Content-Type', 'application/json');
+  if (!headers.has("Content-Type") && !(options?.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
   }
 
   const response = await fetch(path, {
@@ -315,8 +365,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   // Parse JSON or fallback to text
   let data: any = null;
-  const contentType = response.headers.get('content-type');
-  if (contentType && contentType.includes('application/json')) {
+  const contentType = response.headers.get("content-type");
+  if (contentType && contentType.includes("application/json")) {
     data = await response.json().catch(() => null);
   } else {
     data = await response.text().catch(() => null);
@@ -324,10 +374,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const message =
-      (data && typeof data === 'object' && (data.detail || data.message)) ||
+      (data && typeof data === "object" && (data.detail || data.message)) ||
       `Request failed with status ${response.status}`;
-    const errorCode = (data && typeof data === 'object' && data.error) || `HTTP_${response.status}`;
-    const details = data && typeof data === 'object' ? data.details : undefined;
+    const errorCode =
+      (data && typeof data === "object" && data.error) ||
+      `HTTP_${response.status}`;
+    const details = data && typeof data === "object" ? data.details : undefined;
 
     throw new ApiError(message, response.status, errorCode, details);
   }
@@ -341,14 +393,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   // System Health
-  health: () => request<{ status: string; app: string }>('/health'),
+  health: () => request<{ status: string; app: string }>("/health"),
 
   // --------------------------------------------------------------------------
   // Accounts & Credential Vault
   // --------------------------------------------------------------------------
   accounts: {
     list: (activeOnly = false) =>
-      request<Account[]>(`/api/v1/accounts/${buildQueryString({ active_only: activeOnly })}`),
+      request<Account[]>(
+        `/api/v1/accounts/${buildQueryString({ active_only: activeOnly })}`,
+      ),
 
     get: (accountId: string) =>
       request<Account>(`/api/v1/accounts/${accountId}`),
@@ -367,8 +421,8 @@ export const api = {
       api_secret?: string;
       browser_storage_path?: string;
     }) =>
-      request<Account>('/api/v1/accounts/', {
-        method: 'POST',
+      request<Account>("/api/v1/accounts/", {
+        method: "POST",
         body: JSON.stringify(payload),
       }),
 
@@ -385,15 +439,15 @@ export const api = {
         refresh_token?: string;
         api_key?: string;
         api_secret?: string;
-      }
+      },
     ) =>
       request<Account>(`/api/v1/accounts/${accountId}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify(payload),
       }),
 
     delete: (accountId: string) =>
-      request<void>(`/api/v1/accounts/${accountId}`, { method: 'DELETE' }),
+      request<void>(`/api/v1/accounts/${accountId}`, { method: "DELETE" }),
   },
 
   // --------------------------------------------------------------------------
@@ -416,8 +470,8 @@ export const api = {
       tags?: string[];
       extra_metadata?: Record<string, unknown>;
     }) =>
-      request<Campaign>('/api/v1/campaigns/', {
-        method: 'POST',
+      request<Campaign>("/api/v1/campaigns/", {
+        method: "POST",
         body: JSON.stringify(payload),
       }),
 
@@ -432,18 +486,20 @@ export const api = {
         end_date?: string;
         tags?: string[];
         extra_metadata?: Record<string, unknown>;
-      }
+      },
     ) =>
       request<Campaign>(`/api/v1/campaigns/${campaignId}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify(payload),
       }),
 
     delete: (campaignId: string) =>
-      request<void>(`/api/v1/campaigns/${campaignId}`, { method: 'DELETE' }),
+      request<void>(`/api/v1/campaigns/${campaignId}`, { method: "DELETE" }),
 
     listPosts: (campaignId: string, status?: PostStatus) =>
-      request<ScheduledPost[]>(`/api/v1/campaigns/${campaignId}/posts${buildQueryString({ status })}`),
+      request<ScheduledPost[]>(
+        `/api/v1/campaigns/${campaignId}/posts${buildQueryString({ status })}`,
+      ),
 
     queuePost: (
       campaignId: string,
@@ -456,10 +512,10 @@ export const api = {
         status?: PostStatus;
         max_retries?: number;
         extra_metadata?: Record<string, unknown>;
-      }
+      },
     ) =>
       request<ScheduledPost>(`/api/v1/campaigns/${campaignId}/posts`, {
-        method: 'POST',
+        method: "POST",
         body: JSON.stringify(payload),
       }),
 
@@ -476,20 +532,20 @@ export const api = {
         scheduled_at?: string;
         status?: PostStatus;
         extra_metadata?: Record<string, unknown>;
-      }
+      },
     ) =>
       request<ScheduledPost>(`/api/v1/campaigns/posts/${postId}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify(payload),
       }),
 
     cancelPost: (postId: string) =>
       request<ScheduledPost>(`/api/v1/campaigns/posts/${postId}/cancel`, {
-        method: 'POST',
+        method: "POST",
       }),
 
     deletePost: (postId: string) =>
-      request<void>(`/api/v1/campaigns/posts/${postId}`, { method: 'DELETE' }),
+      request<void>(`/api/v1/campaigns/posts/${postId}`, { method: "DELETE" }),
   },
 
   // --------------------------------------------------------------------------
@@ -497,7 +553,9 @@ export const api = {
   // --------------------------------------------------------------------------
   triggers: {
     listHandles: (activeOnly = false) =>
-      request<WatchedHandle[]>(`/api/v1/triggers/handles${buildQueryString({ active_only: activeOnly })}`),
+      request<WatchedHandle[]>(
+        `/api/v1/triggers/handles${buildQueryString({ active_only: activeOnly })}`,
+      ),
 
     getHandle: (handleId: string) =>
       request<WatchedHandle>(`/api/v1/triggers/handles/${handleId}`),
@@ -509,8 +567,8 @@ export const api = {
       scrape_frequency_minutes?: number;
       extra_metadata?: Record<string, unknown>;
     }) =>
-      request<WatchedHandle>('/api/v1/triggers/handles', {
-        method: 'POST',
+      request<WatchedHandle>("/api/v1/triggers/handles", {
+        method: "POST",
         body: JSON.stringify(payload),
       }),
 
@@ -521,18 +579,22 @@ export const api = {
         is_active?: boolean;
         scrape_frequency_minutes?: number;
         extra_metadata?: Record<string, unknown>;
-      }
+      },
     ) =>
       request<WatchedHandle>(`/api/v1/triggers/handles/${handleId}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify(payload),
       }),
 
     deleteHandle: (handleId: string) =>
-      request<void>(`/api/v1/triggers/handles/${handleId}`, { method: 'DELETE' }),
+      request<void>(`/api/v1/triggers/handles/${handleId}`, {
+        method: "DELETE",
+      }),
 
     listRules: (params?: { platform?: PlatformType; active_only?: boolean }) =>
-      request<TriggerRule[]>(`/api/v1/triggers/rules${buildQueryString(params)}`),
+      request<TriggerRule[]>(
+        `/api/v1/triggers/rules${buildQueryString(params)}`,
+      ),
 
     getRule: (ruleId: string) =>
       request<TriggerRule>(`/api/v1/triggers/rules/${ruleId}`),
@@ -552,8 +614,8 @@ export const api = {
       is_active?: boolean;
       extra_metadata?: Record<string, unknown>;
     }) =>
-      request<TriggerRule>('/api/v1/triggers/rules', {
-        method: 'POST',
+      request<TriggerRule>("/api/v1/triggers/rules", {
+        method: "POST",
         body: JSON.stringify(payload),
       }),
 
@@ -572,18 +634,24 @@ export const api = {
         cooldown_minutes?: number;
         is_active?: boolean;
         extra_metadata?: Record<string, unknown>;
-      }
+      },
     ) =>
       request<TriggerRule>(`/api/v1/triggers/rules/${ruleId}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify(payload),
       }),
 
     deleteRule: (ruleId: string) =>
-      request<void>(`/api/v1/triggers/rules/${ruleId}`, { method: 'DELETE' }),
+      request<void>(`/api/v1/triggers/rules/${ruleId}`, { method: "DELETE" }),
 
-    listMatches: (params?: { rule_id?: string; status?: TriggerMatchStatus; limit?: number }) =>
-      request<TriggerMatch[]>(`/api/v1/triggers/matches${buildQueryString(params)}`),
+    listMatches: (params?: {
+      rule_id?: string;
+      status?: TriggerMatchStatus;
+      limit?: number;
+    }) =>
+      request<TriggerMatch[]>(
+        `/api/v1/triggers/matches${buildQueryString(params)}`,
+      ),
 
     getMatch: (matchId: string) =>
       request<TriggerMatch>(`/api/v1/triggers/matches/${matchId}`),
@@ -591,12 +659,12 @@ export const api = {
     reviewMatch: (
       matchId: string,
       payload: {
-        status: 'approved' | 'ignored';
+        status: "approved" | "ignored";
         edited_response?: string;
-      }
+      },
     ) =>
       request<TriggerMatch>(`/api/v1/triggers/matches/${matchId}/review`, {
-        method: 'POST',
+        method: "POST",
         body: JSON.stringify(payload),
       }),
   },
@@ -611,8 +679,7 @@ export const api = {
       tier?: LeadTier;
       limit?: number;
       offset?: number;
-    }) =>
-      request<Lead[]>(`/api/v1/outreach/leads${buildQueryString(params)}`),
+    }) => request<Lead[]>(`/api/v1/outreach/leads${buildQueryString(params)}`),
 
     getLead: (leadId: string) =>
       request<Lead>(`/api/v1/outreach/leads/${leadId}`),
@@ -631,8 +698,8 @@ export const api = {
       notes?: string;
       extra_metadata?: Record<string, unknown>;
     }) =>
-      request<Lead>('/api/v1/outreach/leads', {
-        method: 'POST',
+      request<Lead>("/api/v1/outreach/leads", {
+        method: "POST",
         body: JSON.stringify(payload),
       }),
 
@@ -649,18 +716,20 @@ export const api = {
         tags?: string[];
         notes?: string;
         extra_metadata?: Record<string, unknown>;
-      }
+      },
     ) =>
       request<Lead>(`/api/v1/outreach/leads/${leadId}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify(payload),
       }),
 
     deleteLead: (leadId: string) =>
-      request<void>(`/api/v1/outreach/leads/${leadId}`, { method: 'DELETE' }),
+      request<void>(`/api/v1/outreach/leads/${leadId}`, { method: "DELETE" }),
 
     listCampaigns: (isActive?: boolean) =>
-      request<OutreachCampaign[]>(`/api/v1/outreach/campaigns${buildQueryString({ is_active: isActive })}`),
+      request<OutreachCampaign[]>(
+        `/api/v1/outreach/campaigns${buildQueryString({ is_active: isActive })}`,
+      ),
 
     getCampaign: (campaignId: string) =>
       request<OutreachCampaign>(`/api/v1/outreach/campaigns/${campaignId}`),
@@ -674,8 +743,8 @@ export const api = {
       template?: string;
       extra_metadata?: Record<string, unknown>;
     }) =>
-      request<OutreachCampaign>('/api/v1/outreach/campaigns', {
-        method: 'POST',
+      request<OutreachCampaign>("/api/v1/outreach/campaigns", {
+        method: "POST",
         body: JSON.stringify(payload),
       }),
 
@@ -689,15 +758,17 @@ export const api = {
         target_criteria?: Record<string, unknown>;
         template?: string;
         extra_metadata?: Record<string, unknown>;
-      }
+      },
     ) =>
       request<OutreachCampaign>(`/api/v1/outreach/campaigns/${campaignId}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify(payload),
       }),
 
     deleteCampaign: (campaignId: string) =>
-      request<void>(`/api/v1/outreach/campaigns/${campaignId}`, { method: 'DELETE' }),
+      request<void>(`/api/v1/outreach/campaigns/${campaignId}`, {
+        method: "DELETE",
+      }),
 
     listMessages: (params?: {
       lead_id?: string;
@@ -705,7 +776,9 @@ export const api = {
       status?: OutreachMessageStatus;
       limit?: number;
     }) =>
-      request<OutreachMessage[]>(`/api/v1/outreach/messages${buildQueryString(params)}`),
+      request<OutreachMessage[]>(
+        `/api/v1/outreach/messages${buildQueryString(params)}`,
+      ),
 
     getMessage: (messageId: string) =>
       request<OutreachMessage>(`/api/v1/outreach/messages/${messageId}`),
@@ -718,26 +791,31 @@ export const api = {
       channel?: OutreachChannel;
       extra_metadata?: Record<string, unknown>;
     }) =>
-      request<OutreachMessage>('/api/v1/outreach/messages/stage', {
-        method: 'POST',
+      request<OutreachMessage>("/api/v1/outreach/messages/stage", {
+        method: "POST",
         body: JSON.stringify(payload),
       }),
 
     reviewMessage: (
       messageId: string,
       payload: {
-        status: 'approved' | 'rejected';
+        status: "approved" | "rejected";
         edited_content?: string;
         rejection_reason?: string;
-      }
+      },
     ) =>
-      request<OutreachMessage>(`/api/v1/outreach/messages/${messageId}/review`, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      }),
+      request<OutreachMessage>(
+        `/api/v1/outreach/messages/${messageId}/review`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+      ),
 
     deleteMessage: (messageId: string) =>
-      request<void>(`/api/v1/outreach/messages/${messageId}`, { method: 'DELETE' }),
+      request<void>(`/api/v1/outreach/messages/${messageId}`, {
+        method: "DELETE",
+      }),
   },
 
   // --------------------------------------------------------------------------
@@ -753,11 +831,9 @@ export const api = {
       until?: string;
       limit?: number;
       offset?: number;
-    }) =>
-      request<ActivityLog[]>(`/api/v1/history/${buildQueryString(params)}`),
+    }) => request<ActivityLog[]>(`/api/v1/history/${buildQueryString(params)}`),
 
-    get: (logId: string) =>
-      request<ActivityLog>(`/api/v1/history/${logId}`),
+    get: (logId: string) => request<ActivityLog>(`/api/v1/history/${logId}`),
 
     logActivity: (payload: {
       activity_type: string;
@@ -769,8 +845,8 @@ export const api = {
       actor?: string;
       extra_metadata?: Record<string, unknown>;
     }) =>
-      request<ActivityLog>('/api/v1/history/', {
-        method: 'POST',
+      request<ActivityLog>("/api/v1/history/", {
+        method: "POST",
         body: JSON.stringify(payload),
       }),
   },
@@ -779,8 +855,7 @@ export const api = {
   // AI Copilot & Streaming Execution Engine
   // --------------------------------------------------------------------------
   copilot: {
-    listModels: () =>
-      request<CopilotModelInfo[]>('/api/v1/copilot/models'),
+    listModels: () => request<CopilotModelInfo[]>("/api/v1/copilot/models"),
 
     listSessions: (includeArchived = false, limit = 50, offset = 0) =>
       request<ChatSession[]>(
@@ -788,15 +863,18 @@ export const api = {
           include_archived: includeArchived,
           limit,
           offset,
-        })}`
+        })}`,
       ),
 
     getSession: (sessionId: string) =>
       request<ChatSession>(`/api/v1/copilot/sessions/${sessionId}`),
 
-    createSession: (title = 'New Marketing Session', systemPromptOverride?: string) =>
-      request<ChatSession>('/api/v1/copilot/sessions', {
-        method: 'POST',
+    createSession: (
+      title = "New Marketing Session",
+      systemPromptOverride?: string,
+    ) =>
+      request<ChatSession>("/api/v1/copilot/sessions", {
+        method: "POST",
         body: JSON.stringify({
           title,
           system_prompt_override: systemPromptOverride,
@@ -809,19 +887,21 @@ export const api = {
         title?: string;
         is_archived?: boolean;
         system_prompt_override?: string;
-      }
+      },
     ) =>
       request<ChatSession>(`/api/v1/copilot/sessions/${sessionId}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify(payload),
       }),
 
     deleteSession: (sessionId: string) =>
-      request<void>(`/api/v1/copilot/sessions/${sessionId}`, { method: 'DELETE' }),
+      request<void>(`/api/v1/copilot/sessions/${sessionId}`, {
+        method: "DELETE",
+      }),
 
     getMessages: (sessionId: string, limit = 100, offset = 0) =>
       request<ChatMessage[]>(
-        `/api/v1/copilot/sessions/${sessionId}/messages${buildQueryString({ limit, offset })}`
+        `/api/v1/copilot/sessions/${sessionId}/messages${buildQueryString({ limit, offset })}`,
       ),
 
     addMessage: (
@@ -831,24 +911,26 @@ export const api = {
         content: string;
         token_count?: number;
         model_name?: string;
-      }
+      },
     ) =>
       request<ChatMessage>(`/api/v1/copilot/sessions/${sessionId}/messages`, {
-        method: 'POST',
+        method: "POST",
         body: JSON.stringify(payload),
       }),
 
     getTools: (sessionId: string) =>
-      request<ToolExecutionLog[]>(`/api/v1/copilot/sessions/${sessionId}/tools`),
+      request<ToolExecutionLog[]>(
+        `/api/v1/copilot/sessions/${sessionId}/tools`,
+      ),
 
     chat: (
       sessionId: string,
       content: string,
       modelOverride?: string,
-      thinking?: boolean
+      thinking?: boolean,
     ) =>
       request<ChatMessage>(`/api/v1/copilot/sessions/${sessionId}/chat`, {
-        method: 'POST',
+        method: "POST",
         body: JSON.stringify({
           content,
           model_override: modelOverride,
@@ -863,18 +945,21 @@ export const api = {
       onTools?: (tools: ToolExecutionLog[]) => void,
       signal?: AbortSignal,
       modelOverride?: string,
-      thinking?: boolean
+      thinking?: boolean,
     ): Promise<void> => {
-      const response = await fetch(`/api/v1/copilot/sessions/${sessionId}/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content,
-          model_override: modelOverride,
-          thinking: Boolean(thinking),
-        }),
-        signal,
-      });
+      const response = await fetch(
+        `/api/v1/copilot/sessions/${sessionId}/stream`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content,
+            model_override: modelOverride,
+            thinking: Boolean(thinking),
+          }),
+          signal,
+        },
+      );
 
       if (!response.ok) {
         let errorPayload: any = null;
@@ -885,22 +970,26 @@ export const api = {
         }
 
         const message =
-          (errorPayload && typeof errorPayload === 'object' && (errorPayload.detail || errorPayload.message)) ||
+          (errorPayload &&
+            typeof errorPayload === "object" &&
+            (errorPayload.detail || errorPayload.message)) ||
           `Streaming request failed with status ${response.status}`;
         const errorCode =
-          (errorPayload && typeof errorPayload === 'object' && errorPayload.error) ||
+          (errorPayload &&
+            typeof errorPayload === "object" &&
+            errorPayload.error) ||
           `HTTP_${response.status}`;
 
         throw new ApiError(message, response.status, errorCode);
       }
 
       if (!response.body) {
-        throw new ApiError('No readable stream body returned from server', 500);
+        throw new ApiError("No readable stream body returned from server", 500);
       }
 
       const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
 
       try {
         while (true) {
@@ -910,39 +999,43 @@ export const api = {
           buffer += decoder.decode(value, { stream: true });
 
           // Split along SSE event boundary (\n\n)
-          const events = buffer.split('\n\n');
-          buffer = events.pop() || '';
+          const events = buffer.split("\n\n");
+          buffer = events.pop() || "";
 
           for (const event of events) {
             const trimmed = event.trim();
             if (!trimmed) continue;
 
-            const lines = trimmed.split('\n');
+            const lines = trimmed.split("\n");
             for (const line of lines) {
-              if (line.startsWith('data: ')) {
+              if (line.startsWith("data: ")) {
                 const rawPayload = line.slice(6).trim();
 
                 // Termination sentinel
-                if (rawPayload === '[DONE]') {
+                if (rawPayload === "[DONE]") {
                   return;
                 }
 
                 // Error sentinel
-                if (rawPayload.startsWith('[ERROR]: ')) {
-                  throw new ApiError(rawPayload.slice(9), 500, 'STREAM_ERROR');
+                if (rawPayload.startsWith("[ERROR]: ")) {
+                  throw new ApiError(rawPayload.slice(9), 500, "STREAM_ERROR");
                 }
 
                 // Parse JSON escaped payload
                 try {
                   const decoded = JSON.parse(rawPayload);
 
-                  if (decoded && typeof decoded === 'object' && decoded.__event__ === 'tools') {
+                  if (
+                    decoded &&
+                    typeof decoded === "object" &&
+                    decoded.__event__ === "tools"
+                  ) {
                     if (onTools && Array.isArray(decoded.tools)) {
                       onTools(decoded.tools);
                     }
-                  } else if (typeof decoded === 'string') {
-                    if (decoded.startsWith('[ERROR]: ')) {
-                      throw new ApiError(decoded.slice(9), 500, 'STREAM_ERROR');
+                  } else if (typeof decoded === "string") {
+                    if (decoded.startsWith("[ERROR]: ")) {
+                      throw new ApiError(decoded.slice(9), 500, "STREAM_ERROR");
                     }
                     onToken(decoded);
                   }
@@ -965,17 +1058,19 @@ export const api = {
   // --------------------------------------------------------------------------
   recipes: {
     syncDisk: () =>
-      request<ActionRecipe[]>('/api/v1/recipes/sync-disk', { method: 'POST' }),
-    
+      request<ActionRecipe[]>("/api/v1/recipes/sync-disk", { method: "POST" }),
+
     list: (params?: { platform?: PlatformType; active_only?: boolean }) =>
       request<ActionRecipe[]>(`/api/v1/recipes/${buildQueryString(params)}`),
-  
+
     get: (recipeId: string) =>
       request<ActionRecipe>(`/api/v1/recipes/${recipeId}`),
-  
+
     getDefault: (platform: PlatformType) =>
-      request<ActionRecipe | null>(`/api/v1/recipes/default${buildQueryString({ platform, category })}`),
-  
+      request<ActionRecipe | null>(
+        `/api/v1/recipes/default${buildQueryString({ platform, category })}`,
+      ),
+
     create: (payload: {
       name: string;
       platform: PlatformType;
@@ -985,11 +1080,11 @@ export const api = {
       is_active?: boolean;
       extra_metadata?: Record<string, unknown>;
     }) =>
-      request<ActionRecipe>('/api/v1/recipes/', {
-        method: 'POST',
+      request<ActionRecipe>("/api/v1/recipes/", {
+        method: "POST",
         body: JSON.stringify(payload),
       }),
-  
+
     update: (
       recipeId: string,
       payload: {
@@ -999,14 +1094,86 @@ export const api = {
         is_default?: boolean;
         is_active?: boolean;
         extra_metadata?: Record<string, unknown>;
-      }
+      },
     ) =>
       request<ActionRecipe>(`/api/v1/recipes/${recipeId}`, {
-        method: 'PATCH',
+        method: "PATCH",
         body: JSON.stringify(payload),
       }),
-  
+
     delete: (recipeId: string) =>
-      request<void>(`/api/v1/recipes/${recipeId}`, { method: 'DELETE' }),
+      request<void>(`/api/v1/recipes/${recipeId}`, { method: "DELETE" }),
+  },
+
+  // --------------------------------------------------------------------------
+  // External Data Connectors (GSC, Ahrefs, DataForSEO)
+  // --------------------------------------------------------------------------
+  connectors: {
+    list: (params?: {
+      connector_type?: ConnectorType;
+      active_only?: boolean;
+    }) =>
+      request<DataConnector[]>(
+        `/api/v1/connectors/${buildQueryString(params)}`,
+      ),
+
+    get: (connectorId: string) =>
+      request<DataConnector>(`/api/v1/connectors/${connectorId}`),
+
+    create: (payload: {
+      name: string;
+      connector_type: ConnectorType;
+      target_identifier: string;
+      sync_frequency_minutes?: number;
+      api_key?: string;
+      access_token?: string;
+      refresh_token?: string;
+      client_id?: string;
+      client_secret?: string;
+      extra_metadata?: Record<string, unknown>;
+    }) =>
+      request<DataConnector>("/api/v1/connectors/", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+
+    update: (
+      connectorId: string,
+      payload: {
+        name?: string;
+        target_identifier?: string;
+        is_active?: boolean;
+        status?: ConnectorStatus;
+        sync_frequency_minutes?: number;
+        api_key?: string;
+        access_token?: string;
+        refresh_token?: string;
+        client_secret?: string;
+        extra_metadata?: Record<string, unknown>;
+      },
+    ) =>
+      request<DataConnector>(`/api/v1/connectors/${connectorId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+
+    delete: (connectorId: string) =>
+      request<void>(`/api/v1/connectors/${connectorId}`, { method: "DELETE" }),
+
+    test: (connectorId: string) =>
+      request<{ status: string; verified: boolean }>(
+        `/api/v1/connectors/${connectorId}/test`,
+        {
+          method: "POST",
+        },
+      ),
+
+    getOpportunities: (
+      connectorId: string,
+      params?: { min_impressions?: number; limit?: number },
+    ) =>
+      request<MetricOpportunityItem[]>(
+        `/api/v1/connectors/${connectorId}/opportunities${buildQueryString(params)}`,
+      ),
   },
 };

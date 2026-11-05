@@ -171,3 +171,25 @@ class ToolExecutionStatus(str, enum.Enum):
     PENDING = "pending"
     SUCCESS = "success"
     ERROR = "error"
+
+
+class ConnectorType(str, enum.Enum):
+    """External data sources and semantic marketing providers."""
+
+    GOOGLE_SEARCH_CONSOLE = "google_search_console"
+    AHREFS = "ahrefs"
+    DATAFORSEO = "dataforseo"
+    GA4 = "ga4"
+    POSTHOG = "posthog"
+    STRIPE = "stripe"
+    HUBSPOT = "hubspot"
+
+
+class ConnectorStatus(str, enum.Enum):
+    """Operational connection status of an external data source."""
+
+    CONNECTED = "connected"
+    NEEDS_REAUTH = "needs_reauth"
+    RATE_LIMITED = "rate_limited"
+    ERROR = "error"
+    DISABLED = "disabled"

@@ -31,7 +31,13 @@ async def _dispatch_single_post(
 
     # 1. Quota & Cooldown Safety Guards
     if not account.can_post_today():
-        logger.warning("Account @%s cannot post today (quota or cooldown). Skipping post %s.", account.handle, post.id)
+        reason = "Account is paused (is_active=False)" if not account.is_active else \
+                 f"Account status is '{account.status.value}'" if account.status.value != "active" else \
+                 f"Account in cooldown until {account.cooldown_until}" if account.is_in_cooldown() else \
+                 f"Daily post limit reached ({account.daily_posts_sent}/{account.daily_post_limit})"
+        logger.warning("Account @%s cannot post today: %s. Skipping post %s.", account.handle, reason, post.id)
+        post.last_error_message = reason
+        db.commit()
         return False
 
     # 2. Anti-Ban Throttling Slot Check

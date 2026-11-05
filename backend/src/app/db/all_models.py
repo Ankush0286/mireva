@@ -1,6 +1,7 @@
 from app.db.base import Base
 from app.modules.accounts.models import ConnectedAccount
 from app.modules.campaigns.models import Campaign, ScheduledPost
+from app.modules.connectors.models import DataConnector
 from app.modules.copilot.models import ChatMessage, ChatSession, ToolExecutionLog
 from app.modules.history.models import ActivityLog
 from app.modules.outreach.models import Lead, OutreachCampaign, OutreachMessage
@@ -23,4 +24,5 @@ __all__ = [
     "ChatMessage",
     "ToolExecutionLog",
     "ActionRecipe",
+    "DataConnector"
 ]

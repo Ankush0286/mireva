@@ -6,6 +6,11 @@ from app.agent.tools.campaign_tools import (
     queue_social_post,
     schedule_existing_post,
 )
+from app.agent.tools.connector_tools import (
+    get_competitor_keyword_gaps,
+    get_search_console_opportunities,
+    list_marketing_data_sources,
+)
 from app.agent.tools.outreach_tools import add_lead_to_crm, review_staged_dm, stage_cold_outreach_dm
 from app.agent.tools.trigger_tools import (
     add_competitor_to_watch,
@@ -27,4 +32,7 @@ __all__ = [
     "add_lead_to_crm",
     "stage_cold_outreach_dm",
     "review_staged_dm",
+    "list_marketing_data_sources",
+    "get_search_console_opportunities",
+    "get_competitor_keyword_gaps",
 ]
