@@ -26,7 +26,6 @@ const VALID_SIDEBAR_TABS: SidebarTab[] = [
   "outreach",
   "studio",
   "history",
-  "settings",
 ];
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({ initialTab }) => {

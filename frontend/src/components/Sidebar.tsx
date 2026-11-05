@@ -8,7 +8,6 @@ import {
   Send,
   Sliders,
   History,
-  Settings,
   Plus,
   MessageSquare,
   ChevronDown,
@@ -28,8 +27,7 @@ export type SidebarTab =
   | "triggers"
   | "outreach"
   | "brand"
-  | "history"
-  | "settings";
+  | "history";
 
 interface SidebarProps {
   activeTab: SidebarTab;
@@ -287,41 +285,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             );
           })}
-        </div>
-
-        <div className="mx-4 my-1 border-b border-[#F0F5FA] shrink-0" />
-
-        {/* Settings Tab */}
-        <div className="px-3 shrink-0">
-          <button
-            type="button"
-            onClick={() => onSelectTab("settings")}
-            title={isCollapsed ? "Settings" : undefined}
-            className={`w-full flex items-center h-9 rounded-xl transition-colors duration-150 cursor-pointer overflow-hidden ${
-              activeTab === "settings"
-                ? "bg-[#EBF3FC] text-[#0E3A75] shadow-2xs font-bold"
-                : "text-slate-600 hover:text-[#09122A] hover:bg-slate-50 font-semibold"
-            }`}
-          >
-            <div className="w-10 h-9 shrink-0 flex items-center justify-center">
-              <Settings
-                size={16}
-                strokeWidth={activeTab === "settings" ? 2.3 : 1.9}
-                className={
-                  activeTab === "settings" ? "text-[#0E3A75]" : "text-slate-500"
-                }
-              />
-            </div>
-            <span
-              className={`text-[12.5px] whitespace-nowrap overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
-                isCollapsed
-                  ? "max-w-0 opacity-0 pointer-events-none"
-                  : "max-w-[140px] opacity-100 ml-1"
-              }`}
-            >
-              Settings
-            </span>
-          </button>
         </div>
 
         {/* ===================================================================== */}
