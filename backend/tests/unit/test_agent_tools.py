@@ -240,29 +240,50 @@ def test_outreach_tools_execution_and_error_handling(db_session: Session):
 # Brand Tools Unit Tests
 # =============================================================================
 
-
 def test_brand_tools_execution(db_session: Session):
-    ctx = _make_run_context(db_session)
+    from app.modules.brand.commands import UpdateBrandKitCommand
+    from app.modules.brand.service import BrandService
 
-    # 1. Query full brand knowledge (auto-seeds default Orlume kit)
+    ctx = _make_run_context(db_session)
+    brand_service = BrandService(db_session)
+
+    # 1. Query on unconfigured DB returns blank default kit
+    empty_knowledge = get_brand_knowledge(ctx)
+    assert empty_knowledge["brand_name"] == ""
+    assert empty_knowledge["tone_traits"] == []
+
+    # 2. Populate primary brand kit and verify tool returns configured ground truth
+    primary_kit = brand_service.get_or_create_default_primary()
+    brand_service.update_brand_kit(
+        UpdateBrandKitCommand(
+            brand_kit_id=primary_kit.id,
+            name="Acme Growth",
+            website_url="https://acme.ai",
+            tone_traits=["punchy", "direct"],
+            banned_words=["delve"],
+            target_personas=[
+                {"title": "Solo Founders", "pain_points": ["Time"], "pitch_angle": "Ship fast"}
+            ],
+        )
+    )
+
     knowledge = get_brand_knowledge(ctx)
-    assert knowledge["brand_name"] == "Orlume"
-    assert "https://orlume.site" in knowledge["website_url"]
+    assert knowledge["brand_name"] == "Acme Growth"
+    assert "https://acme.ai" in knowledge["website_url"]
     assert "punchy" in knowledge["tone_traits"]
     assert "delve" in knowledge["banned_words_never_use"]
-    assert len(knowledge["target_personas"]) >= 1
+    assert len(knowledge["target_personas"]) == 1
 
-    # 2. Query specific section: tone & voice
+    # 3. Query specific section: tone & voice
     tone_sec = get_brand_knowledge(ctx, section="tone")
     assert "tone_traits" in tone_sec
     assert "banned_words_never_use" in tone_sec
     assert "target_personas" not in tone_sec
 
-    # 3. Query specific section: personas
+    # 4. Query specific section: personas
     personas_sec = get_brand_knowledge(ctx, section="personas")
     assert "target_personas" in personas_sec
     assert "tone_traits" not in personas_sec
-
 
 # =============================================================================
 # Data Connector Tools Unit Tests

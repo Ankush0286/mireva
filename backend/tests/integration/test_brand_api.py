@@ -4,15 +4,16 @@ from fastapi.testclient import TestClient
 
 
 def test_get_primary_brand_kit_api(client: TestClient):
-    # GET /api/v1/brand/primary returns or auto-seeds primary brand kit
+    # GET /api/v1/brand/primary returns or auto-creates blank primary brand kit
     res = client.get("/api/v1/brand/primary")
     assert res.status_code == 200
     data = res.json()
 
-    assert data["name"] == "Orlume"
+    assert data["name"] == ""
     assert data["is_primary"] is True
-    assert "punchy" in data["tone_traits"]
-    assert "delve" in data["banned_words"]
+    assert data["tone_traits"] == []
+    assert data["banned_words"] == []
+    assert data["target_personas"] == []
     assert "id" in data
 
 
@@ -62,11 +63,11 @@ def test_patch_nonexistent_brand_kit_returns_404(client: TestClient):
     assert res.json()["error"] == "NOT_FOUND"
 
 
-def test_create_brand_kit_invalid_payload_returns_422(client: TestClient):
-    # Empty name violates min_length=1
+def test_create_brand_kit_name_exceeds_max_length_returns_422(client: TestClient):
+    # Name exceeding max_length=150
     res = client.post(
         "/api/v1/brand/",
-        json={"name": ""},
+        json={"name": "x" * 151},
     )
     assert res.status_code == 422
     assert res.json()["error"] == "VALIDATION_ERROR"

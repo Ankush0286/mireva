@@ -5,14 +5,14 @@ from uuid import UUID
 
 @dataclass(frozen=True)
 class CreateBrandKitCommand:
-    name: str
+    name: str = ""
     tagline: str | None = None
     description: str | None = None
     website_url: str | None = None
     industry: str | None = None
     is_primary: bool = True
-    tone_traits: list[str] = field(default_factory=lambda: ["punchy", "authentic", "direct", "no-fluff"])
-    banned_words: list[str] = field(default_factory=lambda: ["delve", "leverage", "game-changer", "unleash"])
+    tone_traits: list[str] = field(default_factory=list)
+    banned_words: list[str] = field(default_factory=list)
     preferred_phrases: list[str] = field(default_factory=list)
     emoji_policy: str = "minimal"
     target_personas: list[dict[str, Any]] = field(default_factory=list)

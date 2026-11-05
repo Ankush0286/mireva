@@ -10,13 +10,13 @@ class BrandKit(AuditBase):
     """
     Central ground-truth knowledge repository defining the company's product,
     tone of voice, target buyer personas, value propositions, and positioning.
-    Injected dynamically into the AI Copilot when drafting content or scouting leads.
+    Injected dynamically into the AI Copilot on demand via tools.
     """
 
     __tablename__ = "brand_kits"
 
-    # Core Identity
-    name: Mapped[str] = mapped_column(String(150), nullable=False, index=True)
+    # Core Identity (Starts completely blank)
+    name: Mapped[str] = mapped_column(String(150), default="", nullable=False, index=True)
     tagline: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     website_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -25,22 +25,15 @@ class BrandKit(AuditBase):
     # Primary flag (used by default across all autonomous workers)
     is_primary: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # Tone of Voice Guidelines
+    # Tone of Voice Guidelines (Empty defaults)
     tone_traits: Mapped[list[str]] = mapped_column(
         JSON,
-        default=lambda: ["punchy", "authentic", "direct", "curiosity-inducing", "no-fluff"],
+        default=list,
         nullable=False,
     )
     banned_words: Mapped[list[str]] = mapped_column(
         JSON,
-        default=lambda: [
-            "delve",
-            "leverage",
-            "game-changer",
-            "revolutionary",
-            "unleash",
-            "tapestry",
-        ],
+        default=list,
         nullable=False,
     )
     preferred_phrases: Mapped[list[str]] = mapped_column(
@@ -50,12 +43,11 @@ class BrandKit(AuditBase):
     )
     emoji_policy: Mapped[str] = mapped_column(
         String(50),
-        default="minimal",  # "minimal", "expressive", "none"
+        default="minimal",
         nullable=False,
     )
 
     # Target Audience & Buyer Personas
-    # Example: [{"title": "Solo Founders", "pain_points": ["Lack of time"], "pitch_angle": "Ship faster"}]
     target_personas: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON,
         default=list,
@@ -63,7 +55,6 @@ class BrandKit(AuditBase):
     )
 
     # Value Propositions & Feature Battlecards
-    # Example: [{"feature": "Autonomous Agent", "benefit": "Posts and intercepts leads on autopilot"}]
     value_props: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON,
         default=list,
@@ -77,7 +68,7 @@ class BrandKit(AuditBase):
 
     pricing_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Essential Reference Links (Docs, Calendly, Pricing page)
+    # Essential Reference Links (Pricing, Docs, Booking)
     key_links: Mapped[list[dict[str, str]]] = mapped_column(
         JSON,
         default=list,
@@ -92,9 +83,12 @@ class BrandKit(AuditBase):
 
     def to_prompt_context(self) -> str:
         """
-        Compiles the Brand Kit into a concise, token-efficient system instruction
-        block injected into the AI agent prompt.
+        Compiles configured brand guidelines into a concise, token-efficient
+        instruction block for the AI agent.
         """
+        if not self.name.strip():
+            return "No official Brand Kit configured yet."
+
         lines = [
             f"=== BRAND GROUND TRUTH: {self.name.upper()} ===",
             f"Tagline: {self.tagline or 'N/A'}",
@@ -102,8 +96,8 @@ class BrandKit(AuditBase):
             f"Industry: {self.industry or 'N/A'}",
             f"Core Description: {self.description or 'N/A'}",
             "",
-            f"Tone Guidelines: {', '.join(self.tone_traits)}",
-            f"Banned Words/Fluff to NEVER use: {', '.join(self.banned_words)}",
+            f"Tone Guidelines: {', '.join(self.tone_traits) if self.tone_traits else 'Authentic, concise, direct'}",
+            f"Banned Words/Fluff to NEVER use: {', '.join(self.banned_words) if self.banned_words else 'None'}",
             f"Emoji Policy: {self.emoji_policy}",
         ]
 
@@ -137,11 +131,7 @@ class BrandKit(AuditBase):
 
         if self.key_links:
             links_str = ", ".join(
-                [
-                    f"{link.get('title')}: {link.get('url')}"
-                    for link in self.key_links
-                    if link.get("url")
-                ]
+                [f"{link.get('title')}: {link.get('url')}" for link in self.key_links if link.get("url")]
             )
             if links_str:
                 lines.append(f"Key Reference Links: {links_str}")

@@ -38,51 +38,33 @@ class BrandService:
         )
 
     def get_or_create_default_primary(self) -> BrandKit:
-        """Returns the primary Brand Kit, auto-seeding one for Orlume if empty."""
+        """Returns the primary Brand Kit, creating an empty blank record if none exists."""
         primary = self.get_primary_brand_kit()
         if primary:
             return primary
 
-        # Auto-seed initial brand kit so agent has immediate ground truth
-        default_kit = BrandKit(
-            name="Orlume",
-            tagline="AI Website Builder & Growth Workspace",
-            description="Orlume is an intelligent website builder and autonomous marketing suite that empowers founders to build beautiful landing pages and automate social distribution.",
-            website_url="https://orlume.site",
-            industry="Developer Tools & Marketing Automation",
+        # Create completely blank record for the user to configure
+        empty_kit = BrandKit(
+            name="",
+            tagline="",
+            description="",
+            website_url="",
+            industry="",
             is_primary=True,
-            tone_traits=["punchy", "founder-led", "authentic", "direct", "curiosity-inducing"],
-            banned_words=["delve", "leverage", "game-changer", "revolutionary", "tapestry", "unleash"],
-            preferred_phrases=["built for founders", "ship without limits", "turn ideas into traffic"],
+            tone_traits=[],
+            banned_words=[],
+            preferred_phrases=[],
             emoji_policy="minimal",
-            target_personas=[
-                {
-                    "title": "Solo Founders & Indie Hackers",
-                    "pain_points": ["No time for marketing", "Website design takes too long"],
-                    "pitch_angle": "Build your site in minutes and automate your social launch on autopilot.",
-                },
-                {
-                    "title": "Early-Stage SaaS Startups",
-                    "pain_points": ["Need high-converting landing pages", "Struggling with outbound lead gen"],
-                    "pitch_angle": "Turn cold visitors into inbound leads with AI-optimized copy.",
-                },
-            ],
-            value_props=[
-                {"feature": "Instant Site Generator", "benefit": "Launch production-ready landing pages in seconds."},
-                {"feature": "Autonomous Content Engine", "benefit": "Schedules social posts and intercepts competitor opportunities."},
-                {"feature": "Cold Outreach CRM", "benefit": "Discovers creator leads and personalizes high-converting DMs."},
-            ],
-            competitor_advantages=[
-                {"competitor": "Traditional Web Builders", "why_we_win": "Combines site building directly with marketing and social distribution."},
-            ],
-            key_links=[
-                {"title": "Website", "url": "https://orlume.site"},
-            ],
+            target_personas=[],
+            value_props=[],
+            competitor_advantages=[],
+            pricing_summary="",
+            key_links=[],
         )
-        self.db.add(default_kit)
+        self.db.add(empty_kit)
         self.db.commit()
-        self.db.refresh(default_kit)
-        return default_kit
+        self.db.refresh(empty_kit)
+        return empty_kit
 
     def get_active_brand_context(self) -> str:
         """Returns compiled token-efficient prompt string for Pydantic AI injection."""

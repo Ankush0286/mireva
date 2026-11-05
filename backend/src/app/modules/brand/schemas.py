@@ -11,14 +11,14 @@ from app.modules.brand.commands import (
 
 
 class BrandKitCreateRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=150, examples=["Orlume"])
-    tagline: str | None = Field(None, max_length=255, examples=["AI Website Builder & Autonomous Marketing Agent"])
+    name: str = Field(default="", max_length=150, examples=["Acme Corp"])
+    tagline: str | None = Field(None, max_length=255)
     description: str | None = Field(None, max_length=5000)
-    website_url: str | None = Field(None, max_length=255, examples=["https://orlume.site"])
-    industry: str | None = Field(None, max_length=100, examples=["Developer Tools / SaaS"])
+    website_url: str | None = Field(None, max_length=255)
+    industry: str | None = Field(None, max_length=100)
     is_primary: bool = Field(default=True)
-    tone_traits: list[str] = Field(default_factory=lambda: ["punchy", "authentic", "direct", "no-fluff"])
-    banned_words: list[str] = Field(default_factory=lambda: ["delve", "leverage", "game-changer", "unleash"])
+    tone_traits: list[str] = Field(default_factory=list)
+    banned_words: list[str] = Field(default_factory=list)
     preferred_phrases: list[str] = Field(default_factory=list)
     emoji_policy: str = Field(default="minimal")
     target_personas: list[dict[str, Any]] = Field(default_factory=list)
@@ -33,7 +33,7 @@ class BrandKitCreateRequest(BaseModel):
 
 
 class BrandKitUpdateRequest(BaseModel):
-    name: str | None = Field(None, min_length=1, max_length=150)
+    name: str | None = Field(None, max_length=150)
     tagline: str | None = Field(None, max_length=255)
     description: str | None = Field(None, max_length=5000)
     website_url: str | None = Field(None, max_length=255)
