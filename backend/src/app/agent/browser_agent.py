@@ -14,7 +14,7 @@ from urllib.parse import quote
 from playwright.async_api import Page, async_playwright
 from pydantic_ai import Agent, RunContext
 
-from app.agent.llm import get_openrouter_model
+from app.agent.llm import resolve_model
 from app.core.logging import get_logger
 from app.modules.accounts.models import ConnectedAccount
 from app.platforms.browser.driver import create_stealth_context
@@ -59,7 +59,7 @@ RULES & INTERACTION PATTERNS:
 """.strip()
 
 browser_sub_agent: Agent[BrowserAgentDeps, str] = Agent(
-    get_openrouter_model(),
+    resolve_model(),
     deps_type=BrowserAgentDeps,
     system_prompt=BROWSER_AGENT_SYSTEM_PROMPT,
 )

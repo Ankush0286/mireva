@@ -34,7 +34,8 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
 
-    OPENROUTER_API_KEY: SecretStr = SecretStr("")
+    OPENROUTER_API_KEY: SecretStr
+    FIREWORKS_API_KEY: SecretStr
     SECRET_KEY: SecretStr = SecretStr("default-dev-secret-key-32-bytes!")
 
     @computed_field

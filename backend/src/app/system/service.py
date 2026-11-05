@@ -57,44 +57,12 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": True,
         "description": "Standard photo/video feed post workflow with crop, filter, and caption steps.",
         "steps": [
-            {
-                "type": "click",
-                "description": "Click Create button",
-                "selectors": ["svg[aria-label='New post']", "[aria-label='Create']"],
-            },
-            {
-                "type": "upload",
-                "description": "Upload media file",
-                "target": "input[type='file']",
-                "variable": "media_path",
-            },
-            {
-                "type": "click",
-                "description": "Advance Crop screen",
-                "selectors": ["button:has-text('Next')", "[role='button']:has-text('Next')"],
-            },
-            {
-                "type": "click",
-                "description": "Advance Filter screen",
-                "selectors": ["button:has-text('Next')", "[role='button']:has-text('Next')"],
-            },
-            {
-                "type": "type",
-                "description": "Type post caption",
-                "variable": "content",
-                "selectors": [
-                    "div[aria-label='Write a caption...']",
-                    "[role='dialog'] div[role='textbox']",
-                ],
-            },
-            {
-                "type": "click",
-                "description": "Click Share",
-                "selectors": [
-                    "[role='dialog'] button:has-text('Share')",
-                    "[role='dialog'] div[role='button']:has-text('Share')",
-                ],
-            },
+            {"type": "click", "description": "Click Create button", "selectors": ["svg[aria-label='New post']", "[aria-label='Create']"]},
+            {"type": "upload", "description": "Upload media file", "target": "input[type='file']", "variable": "media_path"},
+            {"type": "click", "description": "Advance Crop screen", "selectors": ["button:has-text('Next')", "[role='button']:has-text('Next')"]},
+            {"type": "click", "description": "Advance Filter screen", "selectors": ["button:has-text('Next')", "[role='button']:has-text('Next')"]},
+            {"type": "type", "description": "Type post caption", "variable": "content", "selectors": ["div[aria-label='Write a caption...']", "[role='dialog'] div[role='textbox']"]},
+            {"type": "click", "description": "Click Share", "selectors": ["[role='dialog'] button:has-text('Share')", "[role='dialog'] div[role='button']:has-text('Share')"]},
         ],
     },
     {
@@ -104,29 +72,9 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": False,
         "description": "Navigates to target profile, opens message thread, and dispatches personalized DM.",
         "steps": [
-            {
-                "type": "click",
-                "description": "Click profile Message button",
-                "selectors": [
-                    "header button:has-text('Message')",
-                    "div[role='button']:has-text('Message')",
-                ],
-            },
-            {
-                "type": "type",
-                "description": "Type DM message",
-                "variable": "content",
-                "selectors": [
-                    "div[aria-label='Message']",
-                    "div[role='textbox'][contenteditable='true']",
-                ],
-            },
-            {
-                "type": "click",
-                "description": "Send message",
-                "selectors": ["button:has-text('Send')", "div[role='button']:has-text('Send')"],
-                "optional": True,
-            },
+            {"type": "click", "description": "Click profile Message button", "selectors": ["header button:has-text('Message')", "[role='button']:has-text('Message')"]},
+            {"type": "type", "description": "Type DM message", "variable": "content", "selectors": ["div[aria-label='Message']", "div[role='textbox'][contenteditable='true']"]},
+            {"type": "click", "description": "Send message", "selectors": ["button:has-text('Send')", "div[role='button']:has-text('Send')"], "optional": True},
         ],
     },
     {
@@ -136,11 +84,7 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": False,
         "description": "Opens Direct inbox and scans unread message threads.",
         "steps": [
-            {
-                "type": "click",
-                "description": "Open Direct Messages",
-                "selectors": ["svg[aria-label='Direct']", "a[href*='/direct/inbox/']"],
-            },
+            {"type": "click", "description": "Open Direct Messages", "selectors": ["svg[aria-label='Direct']", "a[href*='/direct/inbox/']"]},
             {"type": "wait", "description": "Wait for threads to load", "seconds": 3.0},
         ],
     },
@@ -161,25 +105,9 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": True,
         "description": "Standard X/Twitter compose and publish workflow.",
         "steps": [
-            {
-                "type": "click",
-                "description": "Focus Tweet Compose Box",
-                "selectors": ["div[data-testid='tweetTextarea_0']"],
-            },
-            {
-                "type": "type",
-                "description": "Type Tweet copy",
-                "variable": "content",
-                "selectors": ["div[data-testid='tweetTextarea_0']"],
-            },
-            {
-                "type": "click",
-                "description": "Click Post button",
-                "selectors": [
-                    "button[data-testid='tweetButtonInline']",
-                    "button[data-testid='tweetButton']",
-                ],
-            },
+            {"type": "click", "description": "Focus Tweet Compose Box", "selectors": ["div[data-testid='tweetTextarea_0']"]},
+            {"type": "type", "description": "Type Tweet copy", "variable": "content", "selectors": ["div[data-testid='tweetTextarea_0']"]},
+            {"type": "click", "description": "Click Post button", "selectors": ["button[data-testid='tweetButtonInline']", "button[data-testid='tweetButton']"]},
         ],
     },
     {
@@ -189,22 +117,9 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": False,
         "description": "Dispatches direct message from target user's X profile.",
         "steps": [
-            {
-                "type": "click",
-                "description": "Click send DM from profile",
-                "selectors": ["button[data-testid='sendDMFromProfile']"],
-            },
-            {
-                "type": "type",
-                "description": "Type DM copy",
-                "variable": "content",
-                "selectors": ["div[data-testid='dmComposerTextInput']"],
-            },
-            {
-                "type": "click",
-                "description": "Click DM Send button",
-                "selectors": ["button[data-testid='dmComposerSendButton']"],
-            },
+            {"type": "click", "description": "Click send DM from profile", "selectors": ["button[data-testid='sendDMFromProfile']"]},
+            {"type": "type", "description": "Type DM copy", "variable": "content", "selectors": ["div[data-testid='dmComposerTextInput']"]},
+            {"type": "click", "description": "Click DM Send button", "selectors": ["button[data-testid='dmComposerSendButton']"]},
         ],
     },
     {
@@ -214,11 +129,7 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": False,
         "description": "Navigates to X Messages tab and extracts unread conversation turns.",
         "steps": [
-            {
-                "type": "click",
-                "description": "Open Messages tab",
-                "selectors": ["a[data-testid='AppTabBar_DirectMessage_Link']"],
-            },
+            {"type": "click", "description": "Open Messages tab", "selectors": ["a[data-testid='AppTabBar_DirectMessage_Link']"]},
             {"type": "wait", "description": "Wait for conversation list", "seconds": 2.5},
         ],
     },
@@ -303,20 +214,37 @@ class SystemDiagnosticsService:
             )
 
     def _check_ai_gateway(self) -> SubsystemHealth:
-        api_key = settings.OPENROUTER_API_KEY.get_secret_value().strip()
-        has_key = bool(api_key and not api_key.startswith("sk-or-v1-unconfigured"))
+        openrouter_key = settings.OPENROUTER_API_KEY.get_secret_value().strip()
+        fireworks_key = settings.FIREWORKS_API_KEY.get_secret_value().strip()
+
+        has_openrouter = bool(
+            openrouter_key and not openrouter_key.startswith("sk-or-placeholder")
+        )
+        has_fireworks = bool(
+            fireworks_key and not fireworks_key.startswith("fw-placeholder")
+        )
+        has_key = has_openrouter or has_fireworks
+
+        active_provider = (
+            "Fireworks AI"
+            if has_fireworks and not has_openrouter
+            else "OpenRouter + Fireworks AI"
+            if has_fireworks and has_openrouter
+            else "OpenRouter"
+        )
 
         return SubsystemHealth(
             id="ai_gateway",
-            name="AI Copilot & OpenRouter Gateway",
+            name="AI Copilot & Model Gateway",
             status="healthy" if has_key else "warning",
             message=(
-                f"API Key configured • Default: {agent_settings.DEFAULT_MODEL}"
+                f"Provider: {active_provider} • Active: {agent_settings.DEFAULT_MODEL}"
                 if has_key
-                else "OPENROUTER_API_KEY is not set in backend/.env"
+                else "Neither FIREWORKS_API_KEY nor OPENROUTER_API_KEY is configured in backend/.env"
             ),
             details={
-                "api_key_configured": has_key,
+                "openrouter_configured": has_openrouter,
+                "fireworks_configured": has_fireworks,
                 "default_model": agent_settings.DEFAULT_MODEL,
                 "reasoning_model": agent_settings.REASONING_MODEL,
             },
@@ -367,25 +295,16 @@ class SystemDiagnosticsService:
                     if action_key == "publish_post" and (r.is_default or "post" in r.name.lower()):
                         matched_recipe = r
                         break
-                    if (
-                        action_key == "send_dm"
-                        and "dm" in r.name.lower()
-                        and "inbox" not in r.name.lower()
-                    ):
+                    if action_key == "send_dm" and "dm" in r.name.lower() and "inbox" not in r.name.lower():
                         matched_recipe = r
                         break
-                    if action_key == "read_dms" and (
-                        "inbox" in r.name.lower() or "read" in r.name.lower()
-                    ):
+                    if action_key == "read_dms" and ("inbox" in r.name.lower() or "read" in r.name.lower()):
                         matched_recipe = r
                         break
-                    if action_key == "scrape_feed" and (
-                        "scrape" in r.name.lower() or "timeline" in r.name.lower()
-                    ):
+                    if action_key == "scrape_feed" and ("scrape" in r.name.lower() or "timeline" in r.name.lower()):
                         matched_recipe = r
                         break
 
-                # Also check local disk storage/recipes/{platform}_{action}.json
                 disk_file = recipes_dir / f"{platform.value}_{action_key}.json"
                 legacy_publish_file = recipes_dir / f"{platform.value}_publish.json"
                 has_disk_recipe = disk_file.exists() or (
@@ -466,10 +385,13 @@ class SystemDiagnosticsService:
             )
         )
 
-        # Aggregate overall status
         statuses = [s.status for s in subsystems]
         overall: HealthStatus = (
-            "error" if "error" in statuses else "warning" if "warning" in statuses else "healthy"
+            "error"
+            if "error" in statuses
+            else "warning"
+            if "warning" in statuses
+            else "healthy"
         )
 
         entity_counts = {
@@ -507,7 +429,6 @@ class SystemDiagnosticsService:
             if existing:
                 continue
 
-            # If marking default, ensure no other recipe is default on that platform
             is_def = bool(tpl.get("is_default", False))
             if is_def:
                 existing_def = (
@@ -528,7 +449,10 @@ class SystemDiagnosticsService:
                 steps=tpl["steps"],
                 is_default=is_def,
                 is_active=True,
-                extra_metadata={"action_type": tpl["action_type"], "seeded_by": "system_admin"},
+                extra_metadata={
+                    "action_type": tpl["action_type"],
+                    "seeded_by": "system_admin",
+                },
             )
             self.db.add(new_recipe)
             seeded += 1
@@ -560,7 +484,7 @@ class SystemDiagnosticsService:
             return {"status": "skipped", "message": f"Sync skipped or offline mode: {exc}"}
 
     async def run_worker_now(self, worker_name: str) -> WorkerTriggerResponse:
-        """Manually executes a single background worker cycle for testing/admin control."""
+        """Manually executes a single background worker cycle for testing or admin control."""
         clean_name = worker_name.lower().strip()
 
         if clean_name == "post_dispatcher":

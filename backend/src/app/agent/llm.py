@@ -6,18 +6,19 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from pydantic_ai import Agent
+from pydantic_ai.models import Model
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.providers.fireworks import FireworksProvider
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.agent.prompts import MARKETING_AGENT_SYSTEM_PROMPT
-from app.core.agent_config import agent_settings
+from app.core.agent_config import MODEL_REGISTRY, agent_settings
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-
 
 
 @dataclass
@@ -42,22 +43,38 @@ class AgentDeps:
                 raise
 
 
-def get_openrouter_model(model_name: str | None = None) -> OpenRouterModel:
+def resolve_model(model_name: str | None = None) -> Model:
     """
-    Constructs an OpenRouterModel instance.
-    Uses a safe placeholder key if OPENROUTER_API_KEY is unconfigured during unit tests.
+    Deterministically resolves and constructs a Model instance.
+    Uses exact dictionary lookup in MODEL_REGISTRY without fuzzy heuristics.
+    Falls back to DEFAULT_MODEL if an unlisted model ID is passed.
     """
-    raw_key = settings.OPENROUTER_API_KEY.get_secret_value().strip()
-    api_key = raw_key if raw_key else "sk-or-v1-unconfigured-placeholder-key"
+    target_id = (model_name or agent_settings.DEFAULT_MODEL).strip()
+    config = MODEL_REGISTRY.get(target_id) or MODEL_REGISTRY[agent_settings.DEFAULT_MODEL]
 
-    selected_model = model_name or agent_settings.DEFAULT_MODEL
-    provider = OpenRouterProvider(api_key=api_key)
-    return OpenRouterModel(selected_model, provider=provider)
+    if config.provider == "fireworks":
+        api_key = (
+            settings.FIREWORKS_API_KEY.get_secret_value().strip()
+            or "fw-placeholder-for-tests"
+        )
+        provider_fw = FireworksProvider(api_key=api_key)
+        return OpenAIChatModel(config.id, provider=provider_fw)
+
+    # Provider is "openrouter"
+    api_key_or = (
+        settings.OPENROUTER_API_KEY.get_secret_value().strip()
+        or "sk-or-placeholder-for-tests"
+    )
+    provider_or = OpenRouterProvider(api_key=api_key_or)
+    return OpenRouterModel(config.id, provider=provider_or)
 
 
-# The root marketing agent instance
+# Backward-compatible alias
+get_openrouter_model = resolve_model
+
+# Root marketing agent instance
 marketing_agent: Agent[AgentDeps, str] = Agent(
-    get_openrouter_model(),
+    resolve_model(),
     deps_type=AgentDeps,
     system_prompt=MARKETING_AGENT_SYSTEM_PROMPT,
 )
