@@ -10,6 +10,7 @@ import { type ChatSession } from "../../api/client";
 import { type ActiveView } from "../../components/Navbar";
 import { OutreachPage } from "../outreach/OutreachPage";
 import { HistoryPage } from "../history/HistoryPage";
+import { BrandKitPage } from "../brand/BrandKitPage";
 
 interface DashboardPageProps {
   initialTab?: ActiveView;
@@ -69,6 +70,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ initialTab }) => {
         return <TriggersPage />;
       case "outreach":
         return <OutreachPage />;
+      case "brand":
+        return <BrandKitPage />;
       case "studio":
         return <ActionStudioPage />;
       case "history":

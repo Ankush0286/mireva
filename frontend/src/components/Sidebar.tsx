@@ -15,6 +15,7 @@ import {
   RefreshCw,
   PanelLeftClose,
   PanelLeft,
+  BookOpen
 } from "lucide-react";
 import { api, type ChatSession, type Account } from "../api/client";
 
@@ -26,6 +27,7 @@ export type SidebarTab =
   | "studio"
   | "triggers"
   | "outreach"
+  | "brand"
   | "history"
   | "settings";
 
@@ -119,6 +121,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "campaigns", label: "Campaigns", icon: Megaphone },
     { id: "triggers", label: "Triggers Radar", icon: Radio },
     { id: "outreach", label: "Outreach CRM", icon: Send },
+    { id: "brand", label: "Brand Kit", icon: BookOpen },
     { id: "studio", label: "Workflows", icon: Sliders },
     { id: "history", label: "Audit Trail", icon: History },
   ];

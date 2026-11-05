@@ -306,6 +306,32 @@ export interface MetricOpportunityItem {
   score: number;
 }
 
+export interface BrandKit {
+  id: string;
+  name: string;
+  tagline: string | null;
+  description: string | null;
+  website_url: string | null;
+  industry: string | null;
+  is_primary: boolean;
+  tone_traits: string[];
+  banned_words: string[];
+  preferred_phrases: string[];
+  emoji_policy: string;
+  target_personas: Array<{
+    title: string;
+    pain_points: string[];
+    pitch_angle: string;
+  }>;
+  value_props: Array<{ feature: string; benefit: string }>;
+  competitor_advantages: Array<{ competitor: string; why_we_win: string }>;
+  pricing_summary: string | null;
+  key_links: Array<{ title: string; url: string }>;
+  extra_metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 // ============================================================================
 // 2. Custom API Error Class
 // ============================================================================
@@ -1175,5 +1201,24 @@ export const api = {
       request<MetricOpportunityItem[]>(
         `/api/v1/connectors/${connectorId}/opportunities${buildQueryString(params)}`,
       ),
+  },
+
+  // --------------------------------------------------------------------------
+  // Brand Kit & Product Ground Truth
+  // --------------------------------------------------------------------------
+  brand: {
+    getPrimary: () => request<BrandKit>("/api/v1/brand/primary"),
+
+    create: (payload: Partial<BrandKit>) =>
+      request<BrandKit>("/api/v1/brand/", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+
+    update: (id: string, payload: Partial<BrandKit>) =>
+      request<BrandKit>(`/api/v1/brand/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
   },
 };
