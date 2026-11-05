@@ -36,11 +36,11 @@ from app.system.schemas import (
     WorkerTriggerResponse,
 )
 
+# Only track deterministic WRITE actions as recipes; read/exploration is handled by the Browser AI Agent
 CORE_ACTIONS: list[tuple[str, str]] = [
     ("publish_post", "Publish Post"),
     ("send_dm", "Send Cold DM"),
-    ("read_dms", "Read Inbox DMs"),
-    ("scrape_feed", "Scrape Competitor Feed"),
+    ("comment_reply", "Reply to Post"),
 ]
 
 AUDITED_PLATFORMS: list[PlatformType] = [
@@ -72,30 +72,21 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": False,
         "description": "Navigates to target profile, opens message thread, and dispatches personalized DM.",
         "steps": [
-            {"type": "click", "description": "Click profile Message button", "selectors": ["header button:has-text('Message')", "[role='button']:has-text('Message')"]},
+            {"type": "click", "description": "Click profile Message button", "selectors": ["header button:has-text('Message')", "div[role='button']:has-text('Message')"]},
             {"type": "type", "description": "Type DM message", "variable": "content", "selectors": ["div[aria-label='Message']", "div[role='textbox'][contenteditable='true']"]},
             {"type": "click", "description": "Send message", "selectors": ["button:has-text('Send')", "div[role='button']:has-text('Send')"], "optional": True},
         ],
     },
     {
-        "name": "Instagram Default Inbox Reader",
+        "name": "Instagram Default Comment Reply",
         "platform": PlatformType.INSTAGRAM,
-        "action_type": "read_dms",
+        "action_type": "comment_reply",
         "is_default": False,
-        "description": "Opens Direct inbox and scans unread message threads.",
+        "description": "Opens post URL, focuses comment input, types contextual response, and submits.",
         "steps": [
-            {"type": "click", "description": "Open Direct Messages", "selectors": ["svg[aria-label='Direct']", "a[href*='/direct/inbox/']"]},
-            {"type": "wait", "description": "Wait for threads to load", "seconds": 3.0},
-        ],
-    },
-    {
-        "name": "Instagram Default Feed Scraper",
-        "platform": PlatformType.INSTAGRAM,
-        "action_type": "scrape_feed",
-        "is_default": False,
-        "description": "Scrapes recent posts and shortcodes from competitor profile grid.",
-        "steps": [
-            {"type": "wait", "description": "Wait for profile grid", "seconds": 2.5},
+            {"type": "click", "description": "Focus comment input", "selectors": ["textarea[aria-label='Add a comment...']", "form textarea"]},
+            {"type": "type", "description": "Type comment copy", "variable": "content", "selectors": ["textarea[aria-label='Add a comment...']", "form textarea"]},
+            {"type": "click", "description": "Post comment", "selectors": ["button:has-text('Post')", "div[role='button']:has-text('Post')"]},
         ],
     },
     {
@@ -123,24 +114,15 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         ],
     },
     {
-        "name": "Twitter Default Inbox Reader",
+        "name": "Twitter Default Comment Reply",
         "platform": PlatformType.TWITTER,
-        "action_type": "read_dms",
+        "action_type": "comment_reply",
         "is_default": False,
-        "description": "Navigates to X Messages tab and extracts unread conversation turns.",
+        "description": "Submits auto-reply on target tweet for keyword trigger rules.",
         "steps": [
-            {"type": "click", "description": "Open Messages tab", "selectors": ["a[data-testid='AppTabBar_DirectMessage_Link']"]},
-            {"type": "wait", "description": "Wait for conversation list", "seconds": 2.5},
-        ],
-    },
-    {
-        "name": "Twitter Default Timeline Scraper",
-        "platform": PlatformType.TWITTER,
-        "action_type": "scrape_feed",
-        "is_default": False,
-        "description": "Extracts recent tweets and timestamps from target profile.",
-        "steps": [
-            {"type": "wait", "description": "Wait for timeline articles", "seconds": 2.5},
+            {"type": "click", "description": "Focus reply box", "selectors": ["div[data-testid='tweetTextarea_0']", "div[role='textbox']"]},
+            {"type": "type", "description": "Type reply copy", "variable": "content", "selectors": ["div[data-testid='tweetTextarea_0']", "div[role='textbox']"]},
+            {"type": "click", "description": "Submit reply", "selectors": ["button[data-testid='tweetButtonInline']"]},
         ],
     },
 ]
@@ -298,10 +280,7 @@ class SystemDiagnosticsService:
                     if action_key == "send_dm" and "dm" in r.name.lower() and "inbox" not in r.name.lower():
                         matched_recipe = r
                         break
-                    if action_key == "read_dms" and ("inbox" in r.name.lower() or "read" in r.name.lower()):
-                        matched_recipe = r
-                        break
-                    if action_key == "scrape_feed" and ("scrape" in r.name.lower() or "timeline" in r.name.lower()):
+                    if action_key == "comment_reply" and ("comment" in r.name.lower() or "reply" in r.name.lower()):
                         matched_recipe = r
                         break
 
@@ -315,7 +294,7 @@ class SystemDiagnosticsService:
                 native_supports_action = has_native and action_key in (
                     "publish_post",
                     "send_dm",
-                    "scrape_feed",
+                    "comment_reply",
                 )
 
                 status: CoverageStatus = (

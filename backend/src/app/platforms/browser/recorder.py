@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-# Ensure `src` is on sys.path even if invoked directly without PYTHONPATH=src
+# Ensure `src` is on sys.path even when invoked directly
 _SRC_DIR = str(Path(__file__).resolve().parents[3])
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
@@ -44,6 +44,7 @@ YELLOW = "\x1b[33m"
 BLUE = "\x1b[34m"
 MAGENTA = "\x1b[35m"
 
+# Only track deterministic WRITE actions as recipes; read/exploration is handled by the Browser AI Agent
 ACTION_DEFINITIONS: dict[str, dict[str, str]] = {
     "publish_post": {
         "name": "Default Feed Post",
@@ -53,37 +54,24 @@ ACTION_DEFINITIONS: dict[str, dict[str, str]] = {
     "send_dm": {
         "name": "Default Cold DM",
         "label": "Send Cold DM",
-        "guide": "Open a profile via top URL bar -> Click 'Message' -> Type text -> Click Send",
-    },
-    "read_dms": {
-        "name": "Default Inbox Reader",
-        "label": "Read Inbox DMs",
-        "guide": "Click Direct/Messages icon -> Click an unread conversation thread -> Scroll messages",
-    },
-    "scrape_feed": {
-        "name": "Default Feed Scraper",
-        "label": "Scrape Competitor Feed",
-        "guide": "Open a competitor profile via top URL bar -> Click Posts tab -> Scroll down",
+        "guide": "Open profile via top URL bar -> Click 'Message' -> Focus chatbox -> Type text -> Click Send",
     },
     "comment_reply": {
         "name": "Default Comment Auto-Reply",
         "label": "Reply to Post",
-        "guide": "Open a post URL via top URL bar -> Click Comment/Reply box -> Type reply -> Click Post",
+        "guide": "Open post URL via top URL bar -> Click Comment/Reply box -> Type reply -> Click Post",
     },
 }
 
 PLATFORM_URLS: dict[str, dict[str, str]] = {
     "instagram": {
         "default": "https://www.instagram.com/",
-        "read_dms": "https://www.instagram.com/direct/inbox/",
     },
     "twitter": {
         "default": "https://x.com/home",
-        "read_dms": "https://x.com/messages",
     },
     "facebook": {
         "default": "https://www.facebook.com/",
-        "read_dms": "https://www.facebook.com/messages/",
     },
 }
 
@@ -119,9 +107,9 @@ RECORDER_INJECTION_JS = """
         const placeholder = el.getAttribute('placeholder');
         const isEditable = isEditableElement(el);
 
-        // Check aria-label and data-testid on element OR inner SVG/child
         const innerAriaEl = el.querySelector ? el.querySelector('[aria-label]') : null;
-        const ariaLabel = el.getAttribute('aria-label') || (innerAriaEl ? innerAriaEl.getAttribute('aria-label') : null);
+        const rawAria = el.getAttribute('aria-label') || (innerAriaEl ? innerAriaEl.getAttribute('aria-label') : null);
+        const ariaLabel = (rawAria && !/\\b(ago|seconds|minutes|hours|days|weeks)\\b/i.test(rawAria)) ? rawAria : null;
 
         const innerTestEl = el.querySelector ? el.querySelector('[data-testid]') : null;
         const testId = el.getAttribute('data-testid') || (innerTestEl ? innerTestEl.getAttribute('data-testid') : null);
@@ -129,7 +117,6 @@ RECORDER_INJECTION_JS = """
         const rawText = (el.innerText || el.textContent || '').trim();
         const cleanText = rawText.length < 30 ? rawText.replace(/"/g, '\\\\"') : '';
 
-        // Context scopes: modal dialog or profile header
         const inDialog = Boolean(el.closest('[role="dialog"]'));
         const inHeader = Boolean(el.closest('header'));
         const prefix = inDialog ? '[role="dialog"] ' : (inHeader ? 'header ' : '');
@@ -164,7 +151,6 @@ RECORDER_INJECTION_JS = """
                 addUnique('textarea');
             }
         } else {
-            // Non-editable buttons & links: safe to use :has-text()
             if (role && cleanText && role !== 'img' && role !== 'presentation') {
                 if (prefix) addUnique(`${prefix}[role="${role}"]:has-text("${cleanText}")`);
                 addUnique(`[role="${role}"]:has-text("${cleanText}")`);
@@ -200,7 +186,7 @@ RECORDER_INJECTION_JS = """
         }
     };
 
-    // 1. Capture Clicks on interactive elements (prefers clickable parent button over inner SVG)
+    // 1. Capture Clicks on interactive elements
     document.addEventListener('click', (e) => {
         const buttonTarget = e.target.closest('button, a, div[role="button"], [role="menuitem"], [role="tab"], [role="textbox"], [contenteditable="true"], textarea, input');
         const ariaTarget = e.target.closest('svg[aria-label], [aria-label], [data-testid]');
@@ -302,7 +288,7 @@ def _print_coverage_table(db: Session) -> None:
     recipes = db.query(ActionRecipe).filter(ActionRecipe.is_active.is_(True)).all()
     recipes_dir = Path("storage/recipes").resolve()
 
-    print(f"\n{BOLD}  Current Default Recipe Coverage:{RESET}")
+    print(f"\n{BOLD}  Current Write Recipe Coverage (Read/Explore handled by AI Agent):{RESET}")
     header = f"  {'PLATFORM':<13} │ " + " │ ".join(
         f"{meta['label']:<18}" for meta in ACTION_DEFINITIONS.values()
     )
@@ -401,7 +387,7 @@ def _upsert_recipe_to_db(
 
 
 def sync_all_disk_recipes_to_db(db: Session) -> int:
-    """Scans storage/recipes/*.json and syncs all local JSON files into the database."""
+    """Scans storage/recipes/*.json and syncs local JSON files into the database."""
     recipes_dir = Path("storage/recipes").resolve()
     if not recipes_dir.exists():
         print(f"{YELLOW}No storage/recipes directory found.{RESET}")
@@ -460,12 +446,7 @@ async def record_single_workflow(
     storage_state_path = session_mgr.get_storage_state_path(profile_key)
 
     platform_url_map = PLATFORM_URLS.get(clean_platform, PLATFORM_URLS["instagram"])
-    target_url = (
-        target_url_override
-        or platform_url_map.get(clean_action)
-        or platform_url_map["default"]
-    )
-
+    target_url = target_url_override or platform_url_map["default"]
     handle_label = f"@{account.handle}" if account else "Guest Profile"
 
     print(f"\n{CYAN}{BOLD}┌──────────────────────────────────────────────────────────────────────┐{RESET}")
@@ -636,7 +617,7 @@ async def run_interactive_cli(
             for idx, a_key in enumerate(action_keys, start=1):
                 meta = ACTION_DEFINITIONS[a_key]
                 print(f"  {CYAN}[{idx}]{RESET} {BOLD}{meta['label']:<24}{RESET} {DIM}({a_key}){RESET}")
-            print(f"  {MAGENTA}[A]{RESET} {BOLD}Record All 5 Default Recipes Sequentially{RESET}")
+            print(f"  {MAGENTA}[A]{RESET} {BOLD}Record All 3 Default Write Recipes Sequentially{RESET}")
 
             a_choice = input(f"\n{BOLD}Enter choice [1-{len(action_keys)} or A] (default 1): {RESET}").strip().upper() or "1"
             if a_choice == "A":

@@ -641,9 +641,9 @@ export const OutreachPage: React.FC = () => {
             }`}
           >
             <ShieldCheck size={14} />
-            <span>Review Gate ({messages.length})</span>
+            <span>Review Gate ({stats.pendingReviews})</span>
             {stats.pendingReviews > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-white font-mono text-[9px]">
+              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-white font-mono text-[9px] animate-pulse">
                 {stats.pendingReviews}
               </span>
             )}
@@ -670,19 +670,27 @@ export const OutreachPage: React.FC = () => {
 
         {/* Tab-specific Filters */}
         {activeTab === 'messages' ? (
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-400 hidden sm:inline">Status:</span>
-            <select
-              value={messageStatusFilter}
-              onChange={(e) => setMessageStatusFilter(e.target.value as any)}
-              className="h-8 px-2.5 rounded-xl bg-white border border-[#DCE7F5] text-xs font-semibold text-[#09122A] outline-none cursor-pointer"
-            >
-              <option value="staged">Awaiting Approval</option>
-              <option value="approved">Approved</option>
-              <option value="dispatched">Dispatched</option>
-              <option value="rejected">Rejected</option>
-              <option value="all">All Messages</option>
-            </select>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[
+              { id: 'staged', label: 'Awaiting Approval', count: stats.pendingReviews },
+              { id: 'dispatched', label: 'Dispatched', count: messages.filter((m) => m.status === 'dispatched' || m.status === 'approved').length },
+              { id: 'rejected', label: 'Rejected', count: messages.filter((m) => m.status === 'rejected').length },
+              { id: 'all', label: 'All', count: messages.length },
+            ].map((pill) => (
+              <button
+                key={pill.id}
+                type="button"
+                onClick={() => setMessageStatusFilter(pill.id as any)}
+                className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                  messageStatusFilter === pill.id
+                    ? 'bg-[#EBF3FC] text-[#0E3A75] shadow-2xs'
+                    : 'bg-white border border-[#DCE7F5] text-slate-500 hover:text-[#09122A]'
+                }`}
+              >
+                <span>{pill.label}</span>
+                <span className="font-mono text-[10px] opacity-75">({pill.count})</span>
+              </button>
+            ))}
           </div>
         ) : activeTab === 'leads' ? (
           <div className="flex items-center gap-2">
@@ -741,13 +749,33 @@ export const OutreachPage: React.FC = () => {
               <div className="w-12 h-12 rounded-2xl bg-[#EBF3FC] text-[#0E3A75] flex items-center justify-center mx-auto mb-3 shadow-2xs">
                 <ShieldCheck size={24} />
               </div>
-              <h2 className="text-lg font-bold text-[#09122A]">No cold outreach messages in this queue</h2>
+              <h2 className="text-lg font-bold text-[#09122A]">
+                {messageStatusFilter === 'staged'
+                  ? 'No messages awaiting approval'
+                  : `No messages with status "${messageStatusFilter}"`}
+              </h2>
               <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 mb-5 leading-relaxed">
-                When the AI agent or campaign automation stages personalized cold messages, they pause here for human review before any dispatch occurs.
+                {messages.length > 0 && messageStatusFilter !== 'all'
+                  ? `You have ${messages.length} message(s) in other statuses.`
+                  : 'When the AI agent stages personalized cold messages, they pause here for human review.'}
               </p>
-              <button onClick={() => openStageModal()} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0E3A75] text-white text-xs font-semibold shadow-xs cursor-pointer">
-                <Send size={14} /><span>Stage A Cold Message</span>
-              </button>
+              <div className="flex justify-center gap-2">
+                {messages.length > 0 && messageStatusFilter !== 'all' ? (
+                  <button
+                    onClick={() => setMessageStatusFilter('all')}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#09122A] text-xs font-semibold cursor-pointer"
+                  >
+                    <span>View All Messages ({messages.length})</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => openStageModal()}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0E3A75] text-white text-xs font-semibold shadow-xs cursor-pointer"
+                  >
+                    <Send size={14} /><span>Stage A Cold Message</span>
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <div className="space-y-3 pb-8">
@@ -1199,7 +1227,7 @@ export const OutreachPage: React.FC = () => {
                     Sender Account <span className="text-rose-500">*</span>
                   </label>
                   {accounts.length === 0 ? (
-                    <div className="h-10 px-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center">
+                    <div className="h-10 px-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 flex items-center">
                       <span>No connected accounts</span>
                     </div>
                   ) : (
