@@ -1,0 +1,37 @@
+[
+  {
+    "type": "click",
+    "description": "Click \"Message\"",
+    "selectors": [
+      "header [role=\"button\"]:has-text(\"Message\")",
+      "[role=\"button\"]:has-text(\"Message\")",
+      "header div:has-text(\"Message\")",
+      "button:has-text(\"Message\")",
+      "div[role=\"button\"]:has-text(\"Message\")"
+    ],
+    "target": null,
+    "variable": null
+  },
+  {
+    "type": "type",
+    "description": "Type dynamic content",
+    "selectors": [
+      "div[role=\"textbox\"][contenteditable=\"true\"]",
+      "[role=\"textbox\"]"
+    ],
+    "target": null,
+    "variable": "content"
+  },
+  {
+    "type": "click",
+    "description": "Click \"Send\"",
+    "selectors": [
+      "[aria-label=\"Send\"]",
+      "[role=\"button\"]:has-text(\"Send\")",
+      "button:has-text(\"Send\")",
+      "div[role=\"button\"]:has-text(\"Send\")"
+    ],
+    "target": null,
+    "variable": null
+  }
+]
