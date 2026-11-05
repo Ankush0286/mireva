@@ -891,6 +891,28 @@ export const api = {
       request<void>(`/api/v1/outreach/messages/${messageId}`, {
         method: "DELETE",
       }),
+
+    scoutLeads: (payload: {
+      account_id: string;
+      niche_or_query: string;
+      max_leads?: number;
+      auto_import?: boolean;
+    }) =>
+      request<{
+        niche: string;
+        discovered_count: number;
+        imported_count: number;
+        leads: Array<Record<string, unknown>>;
+      }>("/api/v1/outreach/scout", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+
+    sweepInbox: (accountId: string) =>
+      request<{ account: string; platform: string; summary: string }>(
+        `/api/v1/outreach/sweep-inbox?account_id=${accountId}`,
+        { method: "POST" },
+      ),
   },
 
   // --------------------------------------------------------------------------

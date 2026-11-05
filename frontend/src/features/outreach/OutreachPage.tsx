@@ -162,6 +162,13 @@ export const OutreachPage: React.FC = () => {
   const [isCampaignModalOpen, setIsCampaignModalOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<OutreachCampaign | null>(null);
 
+  // AI Scout Modal State
+  const [isScoutModalOpen, setIsScoutModalOpen] = useState(false);
+  const [scoutAccountId, setScoutAccountId] = useState('');
+  const [scoutQuery, setScoutQuery] = useState('ai website builder');
+  const [scoutMaxLeads, setScoutMaxLeads] = useState(5);
+  const [isScouting, setIsScouting] = useState(false);
+
   // Review Staged Message Modal
   const [reviewingMessage, setReviewingMessage] = useState<OutreachMessage | null>(null);
   const [editedMessageContent, setEditedMessageContent] = useState('');
@@ -537,6 +544,34 @@ export const OutreachPage: React.FC = () => {
     });
   };
 
+  // =========================================================================
+  // AI Scout Actions
+  // =========================================================================
+
+  const handleLaunchScout = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!scoutAccountId || !scoutQuery.trim()) return;
+
+    setIsScouting(true);
+    try {
+      const res = await api.outreach.scoutLeads({
+        account_id: scoutAccountId,
+        niche_or_query: scoutQuery.trim(),
+        max_leads: scoutMaxLeads,
+        auto_import: true,
+      });
+
+      showToast(`Scout completed! Discovered ${res.discovered_count} leads and imported ${res.imported_count} into CRM.`);
+      setIsScoutModalOpen(false);
+      await loadData();
+      setActiveTab('leads');
+    } catch (err: any) {
+      showToast(err?.message || 'Scouting failed.', 'error');
+    } finally {
+      setIsScouting(false);
+    }
+  };
+
   const addTag = () => {
     const clean = leadTagInput.trim().toLowerCase();
     if (clean && !leadTags.includes(clean)) {
@@ -592,10 +627,20 @@ export const OutreachPage: React.FC = () => {
             <span>Stage Cold DM</span>
           </button>
           <button
-            onClick={openCreateLeadModal}
+            onClick={() => {
+              setScoutAccountId(accounts[0]?.id ?? '');
+              setIsScoutModalOpen(true);
+            }}
             className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-[#0E3A75] hover:bg-[#092854] text-white text-xs font-semibold shadow-md transition-all hover:scale-[1.01] active:scale-95 cursor-pointer"
           >
-            <UserPlus size={15} strokeWidth={2.4} />
+            <Sparkles size={14} />
+            <span>AI Scout Leads</span>
+          </button>
+          <button
+            onClick={openCreateLeadModal}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-white border border-[#DCE7F5] hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs cursor-pointer"
+          >
+            <UserPlus size={14} />
             <span>Import Lead</span>
           </button>
         </div>
@@ -877,9 +922,20 @@ export const OutreachPage: React.FC = () => {
               <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 mb-5">
                 Add target creators or import SaaS founders to track your relationship stages.
               </p>
-              <button onClick={openCreateLeadModal} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0E3A75] text-white text-xs font-semibold shadow-xs cursor-pointer">
-                <UserPlus size={14} /><span>Import First Lead</span>
-              </button>
+              <div className="flex justify-center gap-2">
+                <button
+                  onClick={() => {
+                    setScoutAccountId(accounts[0]?.id ?? '');
+                    setIsScoutModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0E3A75] text-white text-xs font-semibold shadow-xs cursor-pointer"
+                >
+                  <Sparkles size={14} /><span>AI Scout Leads</span>
+                </button>
+                <button onClick={openCreateLeadModal} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-[#DCE7F5] text-slate-700 text-xs font-semibold shadow-2xs cursor-pointer">
+                  <UserPlus size={14} /><span>Import Lead</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-8">
@@ -1325,7 +1381,76 @@ export const OutreachPage: React.FC = () => {
       )}
 
       {/* ===================================================================== */}
-      {/* 11. CUSTOM CONFIRMATION MODAL                                         */}
+      {/* 11. AI SCOUT LEADS MODAL                                              */}
+      {/* ===================================================================== */}
+      {isScoutModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#09122A]/40 backdrop-blur-sm animate-fade-up-1" onClick={(e) => { if (e.target === e.currentTarget && !isScouting) setIsScoutModalOpen(false); }}>
+          <div className="w-full max-w-[500px] rounded-[26px] bg-white border border-[#DCE7F5] shadow-2xl flex flex-col overflow-hidden text-[#09122A]">
+            <div className="flex items-center justify-between px-6 py-4.5 border-b border-[#F0F5FA] bg-[#F8FBFF]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center"><Sparkles size={16} /></div>
+                <div>
+                  <h3 className="font-bold text-[16px] text-[#09122A]">AI Creator Scout</h3>
+                  <span className="text-xs text-slate-400">Autonomous browser exploration & bio qualification</span>
+                </div>
+              </div>
+              {!isScouting && (
+                <button onClick={() => setIsScoutModalOpen(false)} className="w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-slate-700 flex items-center justify-center cursor-pointer"><X size={15} /></button>
+              )}
+            </div>
+
+            <form onSubmit={handleLaunchScout} className="p-6 space-y-4">
+              {isScouting ? (
+                <div className="py-12 flex flex-col items-center justify-center text-center gap-3">
+                  <LoadingState label="Browser AI Agent exploring feeds & vetting bios" variant="Orbit" />
+                  <p className="text-xs text-slate-400 max-w-xs leading-relaxed">
+                    Chromium is browsing in stealth mode, reading candidate creator bios, filtering out bots, and qualifying prospects for "{scoutQuery}"...
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-xs font-bold text-[#09122A] mb-1">Explorer Account <span className="text-rose-500">*</span></label>
+                    <select required value={scoutAccountId} onChange={(e) => setScoutAccountId(e.target.value)} className="w-full h-10 px-3 rounded-xl bg-[#F8FAFD] border border-[#DCE7F5] text-xs font-semibold outline-none cursor-pointer">
+                      {accounts.map((a) => (
+                        <option key={a.id} value={a.id}>@{a.handle} ({a.platform})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-[#09122A] mb-1">Niche, Keyword, or Hashtag <span className="text-rose-500">*</span></label>
+                    <input type="text" required value={scoutQuery} onChange={(e) => setScoutQuery(e.target.value)} placeholder="e.g. ai tools, #buildinpublic, saas founder" className="w-full h-10 px-3.5 rounded-xl bg-[#F8FAFD] border border-[#DCE7F5] text-xs font-semibold focus:border-[#0E3A75] outline-none" />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs font-bold text-[#09122A] mb-1">
+                      <span>Max Leads to Vet</span>
+                      <span className="font-mono text-[#0E3A75]">{scoutMaxLeads} creators</span>
+                    </div>
+                    <input type="range" min={1} max={10} value={scoutMaxLeads} onChange={(e) => setScoutMaxLeads(Number(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-lg accent-[#0E3A75] cursor-pointer" />
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-[#F8FAFD] border border-[#E2ECF7] text-xs text-slate-500">
+                    <span className="font-bold text-[#09122A] block mb-0.5">Automated Bio Matching</span>
+                    <span>The agent checks follower counts, evaluates niche relevance against your Brand Kit, and auto-imports verified leads into your CRM.</span>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-3 border-t border-[#F0F5FA]">
+                    <button type="button" onClick={() => setIsScoutModalOpen(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-xs font-semibold text-slate-600 cursor-pointer">Cancel</button>
+                    <button type="submit" className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#0E3A75] hover:bg-[#092854] text-white text-xs font-semibold shadow-xs cursor-pointer">
+                      <Sparkles size={14} /><span>Launch Scout Agent</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* 12. CUSTOM CONFIRMATION MODAL                                         */}
       {/* ===================================================================== */}
       {confirmModal.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#09122A]/40 backdrop-blur-sm animate-fade-up-1" onClick={(e) => { if (e.target === e.currentTarget) setConfirmModal((prev) => ({ ...prev, isOpen: false })); }}>
