@@ -18,7 +18,7 @@ DEFAULT_USER_AGENT = (
 )
 
 # Common Chrome command line arguments to strip automation fingerprints
-STEALTH_ARGS: list[str] = [
+BASE_STEALTH_ARGS: list[str] = [
     "--disable-blink-features=AutomationControlled",
     "--disable-infobars",
     "--no-sandbox",
@@ -30,10 +30,8 @@ STEALTH_ARGS: list[str] = [
     "--disable-features=TranslateUI,BlinkGenPropertyTrees",
     "--no-default-browser-check",
     "--no-first-run",
-    "--start-maximized",
 ]
 
-# Client-side JavaScript evaluated on every new document to defeat bot heuristics
 STEALTH_INIT_SCRIPT = """
 (() => {
     // 1. Mask navigator.webdriver
@@ -50,7 +48,7 @@ STEALTH_INIT_SCRIPT = """
         csi: () => ({})
     };
 
-    // 3. Spoof Plugins list (never empty on real desktop browsers)
+    // 3. Spoof Plugins list
     Object.defineProperty(navigator, 'plugins', {
         get: () => [1, 2, 3, 4, 5],
         configurable: true
@@ -71,6 +69,22 @@ STEALTH_INIT_SCRIPT = """
     );
 })();
 """
+
+
+def _clean_stale_profile_locks(user_data_path: Path) -> None:
+    """
+    Removes orphaned Chromium singleton lock files left by abruptly closed
+    browser sessions to prevent exit code 21 (RESULT_CODE_PROFILE_IN_USE).
+    """
+    lock_names = ["SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile"]
+    for name in lock_names:
+        lock_file = user_data_path / name
+        try:
+            if lock_file.is_symlink() or lock_file.exists():
+                lock_file.unlink(missing_ok=True)
+                logger.debug("Cleaned stale profile lock: %s", lock_file)
+        except OSError:
+            pass
 
 
 async def apply_stealth_to_page(page: Page) -> None:
@@ -98,17 +112,25 @@ async def create_stealth_context(
     user_data_path = Path(user_data_dir).resolve()
     user_data_path.mkdir(parents=True, exist_ok=True)
 
+    # 1. Clean stale singleton locks to avoid exit code 21
+    _clean_stale_profile_locks(user_data_path)
+
     # Remove storage_state if passed in kwargs since launch_persistent_context does not accept it
     kwargs.pop("storage_state", None)
+
+    # 2. Configure arguments based on headless vs headed mode
+    launch_args = list(BASE_STEALTH_ARGS)
+    if not headless:
+        launch_args.append("--start-maximized")
 
     context_kwargs: dict[str, Any] = {
         "user_data_dir": str(user_data_path),
         "channel": "chromium",
         "headless": headless,
-        "args": STEALTH_ARGS,
+        "args": launch_args,
         "user_agent": DEFAULT_USER_AGENT,
-        "viewport": None,  # Match native window / maximized
-        "no_viewport": True,
+        "viewport": None if not headless else {"width": 1280, "height": 800},
+        "no_viewport": not headless,
         "ignore_https_errors": True,
         **kwargs,
     }
