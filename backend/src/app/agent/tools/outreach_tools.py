@@ -3,6 +3,10 @@ from uuid import UUID
 
 from pydantic_ai import RunContext
 
+from app.agent.browser_agent import (
+    read_and_summarize_inbox,
+    scout_influencer_leads,
+)
 from app.agent.llm import AgentDeps, marketing_agent
 from app.common.enums import (
     LeadStage,
@@ -12,6 +16,7 @@ from app.common.enums import (
     PlatformType,
 )
 from app.common.exceptions import AppError
+from app.modules.accounts.service import AccountService
 from app.modules.outreach.commands import (
     CreateLeadCommand,
     RecordMessageDeliveryCommand,
@@ -22,6 +27,60 @@ from app.modules.outreach.commands import (
 from app.modules.outreach.exceptions import LeadAlreadyExistsError
 from app.modules.outreach.service import OutreachService
 from app.platforms.registry import PlatformRegistry
+
+
+@marketing_agent.tool
+async def read_inbox_with_browser_agent(
+    ctx: RunContext[AgentDeps],
+    account_id: str,
+    specific_user: str | None = None,
+) -> dict[str, Any]:
+    """
+    Deploys the autonomous Browser AI Agent to log into Instagram or Twitter,
+    scan direct messages, check message requests, open conversation threads,
+    and return a plain-English summary of who replied and what they said.
+    """
+    with ctx.deps.db_session_scope() as db:
+        service = AccountService(db)
+        account = service.get_by_id_or_raise(UUID(account_id))
+
+    summary = await read_and_summarize_inbox(
+        account=account,
+        specific_user=specific_user,
+        headless=True,
+    )
+    return {
+        "account_handle": account.handle,
+        "platform": account.platform.value,
+        "inbox_summary": summary,
+    }
+
+
+@marketing_agent.tool
+async def scout_creators_with_browser_agent(
+    ctx: RunContext[AgentDeps],
+    account_id: str,
+    niche_or_hashtag: str,
+    max_leads: int = 5,
+) -> dict[str, Any]:
+    """
+    Deploys the autonomous Browser AI Agent to explore Instagram or Twitter,
+    inspect creator bios, filter out bots, and return qualified leads.
+    """
+    with ctx.deps.db_session_scope() as db:
+        service = AccountService(db)
+        account = service.get_by_id_or_raise(UUID(account_id))
+
+    report = await scout_influencer_leads(
+        account=account,
+        niche_or_query=niche_or_hashtag,
+        max_leads=max_leads,
+        headless=True,
+    )
+    return {
+        "niche": niche_or_hashtag,
+        "scout_report": report,
+    }
 
 
 @marketing_agent.tool
@@ -143,7 +202,9 @@ def review_staged_dm(
             service = OutreachService(db)
             cmd = ReviewMessageCommand(
                 message_id=UUID(message_id),
-                status=OutreachMessageStatus.APPROVED if approve else OutreachMessageStatus.REJECTED,
+                status=OutreachMessageStatus.APPROVED
+                if approve
+                else OutreachMessageStatus.REJECTED,
                 edited_content=edited_content,
             )
             reviewed = service.review_message(cmd)
