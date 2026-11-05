@@ -958,7 +958,7 @@ export const BrandKitPage: React.FC = () => {
               <div className="space-y-3">
                 <div className="border-b border-[#F0F5FA] pb-2">
                   <h3 className="font-bold text-base text-[#09122A]">
-                    Feature $\rightarrow$ Benefit Matrix
+                    Feature → Benefit Matrix
                   </h3>
                   <span className="text-xs text-slate-400">
                     What specific capabilities exist and why the user cares.

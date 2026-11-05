@@ -332,6 +332,55 @@ export interface BrandKit {
   updated_at: string;
 }
 
+export interface SubsystemHealth {
+  id: string;
+  name: string;
+  status: "healthy" | "warning" | "error";
+  message: string;
+  latency_ms?: number | null;
+  details: Record<string, unknown>;
+}
+
+export interface SchedulerJobInfo {
+  id: string;
+  name: string;
+  next_run_time: string | null;
+}
+
+export interface RecipeCoverageSlot {
+  platform: string;
+  action_type: string;
+  action_label: string;
+  status: "custom_ready" | "native_ready" | "missing";
+  has_custom_recipe: boolean;
+  has_native_adapter: boolean;
+  recipe_id: string | null;
+  recipe_name: string | null;
+}
+
+export interface SystemDiagnosticsResponse {
+  overall_status: "healthy" | "warning" | "error";
+  checked_at: string;
+  subsystems: SubsystemHealth[];
+  scheduler_running: boolean;
+  scheduler_jobs: SchedulerJobInfo[];
+  recipe_matrix: RecipeCoverageSlot[];
+  entity_counts: Record<string, number>;
+}
+
+export interface SeedRecipesResponse {
+  seeded_count: number;
+  total_recipes: number;
+  message: string;
+}
+
+export interface WorkerTriggerResponse {
+  worker: string;
+  status: string;
+  items_processed: number;
+  message: string;
+}
+
 // ============================================================================
 // 2. Custom API Error Class
 // ============================================================================
@@ -1220,5 +1269,36 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify(payload),
       }),
+  },
+
+  // --------------------------------------------------------------------------
+  // System Diagnostics & Admin Controls
+  // --------------------------------------------------------------------------
+  system: {
+    getDiagnostics: () =>
+      request<SystemDiagnosticsResponse>("/api/v1/system/diagnostics"),
+
+    seedRecipes: () =>
+      request<SeedRecipesResponse>("/api/v1/system/seed-recipes", {
+        method: "POST",
+      }),
+
+    syncReplica: () =>
+      request<{ status: string; message: string }>(
+        "/api/v1/system/sync-replica",
+        {
+          method: "POST",
+        },
+      ),
+
+    runWorker: (
+      workerName: "post_dispatcher" | "watcher_worker" | "quota_reset_worker",
+    ) =>
+      request<WorkerTriggerResponse>(
+        `/api/v1/system/workers/${workerName}/run`,
+        {
+          method: "POST",
+        },
+      ),
   },
 };

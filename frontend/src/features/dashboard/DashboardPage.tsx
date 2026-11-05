@@ -11,6 +11,7 @@ import { type ActiveView } from "../../components/Navbar";
 import { OutreachPage } from "../outreach/OutreachPage";
 import { HistoryPage } from "../history/HistoryPage";
 import { BrandKitPage } from "../brand/BrandKitPage";
+import { SystemHealthPage } from "../system/SystemHealthPage";
 
 interface DashboardPageProps {
   initialTab?: ActiveView;
@@ -26,6 +27,7 @@ const VALID_SIDEBAR_TABS: SidebarTab[] = [
   "outreach",
   "studio",
   "history",
+  "system",
 ];
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({ initialTab }) => {
@@ -73,6 +75,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ initialTab }) => {
         return <BrandKitPage />;
       case "studio":
         return <ActionStudioPage />;
+      case "system": // <-- Mount System & Logs
+        return <SystemHealthPage />;
       case "history":
         return <HistoryPage />;
       case "overview":

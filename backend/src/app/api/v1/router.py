@@ -9,6 +9,7 @@ from app.modules.history.router import router as history_router
 from app.modules.outreach.router import router as outreach_router
 from app.modules.recipes.router import router as recipes_router
 from app.modules.triggers.router import router as triggers_router
+from app.system.router import router as system_router
 
 api_v1_router = APIRouter()
 
@@ -64,4 +65,10 @@ api_v1_router.include_router(
     brand_router,
     prefix="/brand",
     tags=["Brand Kit"],
+)
+
+api_v1_router.include_router(
+    system_router,
+    prefix="/system",
+    tags=["System & Diagnostics"],
 )
