@@ -1,20 +1,25 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.orm import Session
 
 from app.automation.scheduler import (
+    get_scheduler,
     start_scheduler,
     stop_scheduler,
 )
 from app.automation.throttler import account_throttler
+from app.automation.workers.dm_dispatcher import run_dm_dispatcher
 from app.automation.workers.post_dispatcher import run_post_dispatcher
 from app.automation.workers.quota_reset_worker import run_quota_reset_worker
 from app.automation.workers.watcher_worker import run_watcher_worker
 from app.common.enums import (
     CampaignStatus,
+    LeadStage,
+    OutreachChannel,
+    OutreachMessageStatus,
     PlatformType,
     PostStatus,
     TriggerActionType,
@@ -28,6 +33,12 @@ from app.modules.campaigns.commands import (
 )
 from app.modules.campaigns.service import CampaignService
 from app.modules.history.service import HistoryService
+from app.modules.outreach.commands import (
+    CreateLeadCommand,
+    ReviewMessageCommand,
+    StageMessageCommand,
+)
+from app.modules.outreach.service import OutreachService
 from app.modules.triggers.commands import (
     AddWatchedHandleCommand,
     CreateTriggerRuleCommand,
@@ -55,7 +66,7 @@ class MockAutomationAdapter(BasePlatformAdapter):
 
     async def send_dm(self, recipient_handle: str, message_text: str) -> str:
         _ = (recipient_handle, message_text)
-        return "mock_dm_123"
+        return "mock_dm_thread_123"
 
     async def scrape_feed(self, target_handle: str, limit: int = 15) -> list[ScrapedPost]:
         _ = limit
@@ -97,7 +108,6 @@ async def test_post_dispatcher_success_flow(db_session: Session):
     campaign_service = CampaignService(db_session)
     history_service = HistoryService(db_session)
 
-    # 1. Seed connected account
     account = account_service.create_account(
         CreateAccountCommand(
             platform=PlatformType.TWITTER,
@@ -107,7 +117,6 @@ async def test_post_dispatcher_success_flow(db_session: Session):
     )
     await account_throttler.reset(account.id)
 
-    # 2. Seed active campaign & due post (scheduled in the past)
     campaign = campaign_service.create_campaign(
         CreateCampaignCommand(name="Auto Campaign", status=CampaignStatus.ACTIVE)
     )
@@ -121,20 +130,16 @@ async def test_post_dispatcher_success_flow(db_session: Session):
         )
     )
 
-    # 3. Run Post Dispatcher Worker
     dispatched = await run_post_dispatcher(db=db_session)
     assert dispatched == 1
 
-    # 4. Verify post status advanced to PUBLISHED
     refreshed_post = campaign_service.get_post_by_id_or_raise(post.id)
     assert refreshed_post.status == PostStatus.PUBLISHED
     assert refreshed_post.platform_post_id == "mock_post_123"
 
-    # 5. Verify account daily quota incremented
     db_session.refresh(account)
     assert account.daily_posts_sent == 1
 
-    # 6. Verify audit trail logged
     logs = history_service.list_activities(entity_id=post.id)
     assert len(logs) == 1
     assert logs[0].activity_type.value == "post_published"
@@ -172,7 +177,151 @@ async def test_post_dispatcher_skips_when_quota_exhausted(db_session: Session):
     assert dispatched == 0
 
     refreshed = campaign_service.get_post_by_id_or_raise(post.id)
-    assert refreshed.status == PostStatus.SCHEDULED  # Remains waiting
+    assert refreshed.status == PostStatus.SCHEDULED
+
+
+# =============================================================================
+# Cold DM Dispatcher Worker Tests
+# =============================================================================
+
+
+@pytest.mark.anyio
+async def test_dm_dispatcher_success_flow(db_session: Session):
+    account_service = AccountService(db_session)
+    outreach_service = OutreachService(db_session)
+    history_service = HistoryService(db_session)
+
+    # 1. Seed account & reset throttle
+    account = account_service.create_account(
+        CreateAccountCommand(
+            platform=PlatformType.TWITTER,
+            handle="sender_bot",
+            daily_dm_limit=15,
+        )
+    )
+    await account_throttler.reset(account.id)
+
+    # 2. Seed lead in DISCOVERED stage
+    lead = outreach_service.create_lead(
+        CreateLeadCommand(
+            platform=PlatformType.TWITTER,
+            handle="prospect_user",
+            display_name="Prospect User",
+            stage=LeadStage.DISCOVERED,
+        )
+    )
+
+    # 3. Stage and approve cold DM
+    staged = outreach_service.stage_message(
+        StageMessageCommand(
+            lead_id=lead.id,
+            account_id=account.id,
+            content="Hey Prospect, loved your latest post!",
+            channel=OutreachChannel.DM,
+        )
+    )
+    outreach_service.review_message(
+        ReviewMessageCommand(
+            message_id=staged.id,
+            status=OutreachMessageStatus.APPROVED,
+        )
+    )
+
+    # 4. Run Cold DM Dispatcher Worker
+    dispatched = await run_dm_dispatcher(db=db_session)
+    assert dispatched == 1
+
+    # 5. Verify message dispatched and thread ID recorded
+    refreshed_msg = outreach_service.get_message_by_id_or_raise(staged.id)
+    assert refreshed_msg.status == OutreachMessageStatus.DISPATCHED
+    assert refreshed_msg.platform_message_id == "mock_dm_thread_123"
+
+    # 6. Verify lead advanced from DISCOVERED -> CONTACTED
+    refreshed_lead = outreach_service.get_lead_by_id_or_raise(lead.id)
+    assert refreshed_lead.stage == LeadStage.CONTACTED
+
+    # 7. Verify daily DM count incremented
+    db_session.refresh(account)
+    assert account.daily_dms_sent == 1
+
+    # 8. Verify audit log entry created
+    logs = history_service.list_activities(entity_id=staged.id)
+    assert len(logs) == 1
+    assert logs[0].activity_type.value == "message_dispatched"
+
+
+@pytest.mark.anyio
+async def test_dm_dispatcher_skips_when_quota_exhausted(db_session: Session):
+    account_service = AccountService(db_session)
+    outreach_service = OutreachService(db_session)
+
+    # Account with daily limit reached
+    account = account_service.create_account(
+        CreateAccountCommand(
+            platform=PlatformType.TWITTER,
+            handle="dm_exhausted_bot",
+            daily_dm_limit=1,
+        )
+    )
+    account.daily_dms_sent = 1
+    db_session.commit()
+
+    lead = outreach_service.create_lead(
+        CreateLeadCommand(platform=PlatformType.TWITTER, handle="prospect_two")
+    )
+    staged = outreach_service.stage_message(
+        StageMessageCommand(
+            lead_id=lead.id,
+            account_id=account.id,
+            content="Will not send",
+        )
+    )
+    staged.status = OutreachMessageStatus.APPROVED
+    db_session.commit()
+
+    dispatched = await run_dm_dispatcher(db=db_session)
+    assert dispatched == 0
+
+    refreshed = outreach_service.get_message_by_id_or_raise(staged.id)
+    assert refreshed.status == OutreachMessageStatus.APPROVED
+
+
+@pytest.mark.anyio
+async def test_dm_dispatcher_failure_flow(db_session: Session):
+    account_service = AccountService(db_session)
+    outreach_service = OutreachService(db_session)
+
+    account = account_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="fail_sender")
+    )
+    await account_throttler.reset(account.id)
+
+    lead = outreach_service.create_lead(
+        CreateLeadCommand(platform=PlatformType.TWITTER, handle="fail_lead")
+    )
+    staged = outreach_service.stage_message(
+        StageMessageCommand(
+            lead_id=lead.id,
+            account_id=account.id,
+            content="Testing failure",
+        )
+    )
+    outreach_service.review_message(
+        ReviewMessageCommand(message_id=staged.id, status=OutreachMessageStatus.APPROVED)
+    )
+
+    # Force adapter to fail
+    mock_adapter = MagicMock()
+    mock_adapter.send_dm = AsyncMock(side_effect=RuntimeError("Twitter 429 Rate Limit"))
+    mock_adapter.close = AsyncMock()
+
+    with patch("app.automation.workers.dm_dispatcher.PlatformRegistry.get_adapter", return_value=mock_adapter):
+        dispatched = await run_dm_dispatcher(db=db_session)
+        assert dispatched == 0
+
+    refreshed = outreach_service.get_message_by_id_or_raise(staged.id)
+    assert refreshed.status == OutreachMessageStatus.FAILED
+    assert "Twitter 429 Rate Limit" in (refreshed.last_error_message or "")
 
 
 # =============================================================================
@@ -185,12 +334,10 @@ async def test_watcher_worker_scrapes_and_generates_matches(db_session: Session)
     account_service = AccountService(db_session)
     trigger_service = TriggerService(db_session)
 
-    # 1. Seed active scraper profile
     scraper = account_service.create_account(
         CreateAccountCommand(platform=PlatformType.TWITTER, handle="scraper_account")
     )
 
-    # 2. Seed watched competitor handle
     handle = trigger_service.add_watched_handle(
         AddWatchedHandleCommand(
             platform=PlatformType.TWITTER,
@@ -199,7 +346,6 @@ async def test_watcher_worker_scrapes_and_generates_matches(db_session: Session)
         )
     )
 
-    # 3. Seed trigger rule looking for 'alternative' keyword
     trigger_service.create_rule(
         CreateTriggerRuleCommand(
             name="Alternative Keyword Rule",
@@ -212,17 +358,14 @@ async def test_watcher_worker_scrapes_and_generates_matches(db_session: Session)
         )
     )
 
-    # 4. Run Watcher Worker
     matches_created = await run_watcher_worker(db=db_session)
     assert matches_created == 1
 
-    # 5. Verify match created in DB
     matches = trigger_service.list_matches()
     assert len(matches) == 1
     assert matches[0].platform_post_id == "tweet_scraped_999"
     assert matches[0].status == TriggerMatchStatus.PENDING_REVIEW
 
-    # 6. Verify handle's last_scraped_at timestamp updated
     db_session.refresh(handle)
     assert handle.last_scraped_at is not None
 
@@ -235,12 +378,9 @@ async def test_watcher_worker_scrapes_and_generates_matches(db_session: Session)
 @pytest.mark.anyio
 async def test_quota_reset_worker(db_session: Session, monkeypatch: pytest.MonkeyPatch):
     account_service = AccountService(db_session)
-
-    # Mock sync_replica so tests do not attempt cloud networking
     mock_sync = MagicMock()
     monkeypatch.setattr("app.automation.workers.quota_reset_worker.sync_replica", mock_sync)
 
-    # Seed account whose reset timestamp was 25 hours ago
     account = account_service.create_account(
         CreateAccountCommand(
             platform=PlatformType.TWITTER,
@@ -256,7 +396,6 @@ async def test_quota_reset_worker(db_session: Session, monkeypatch: pytest.Monke
     reset_count = await run_quota_reset_worker(db=db_session)
     assert reset_count == 1
 
-    # Verify counts reset to 0
     db_session.refresh(account)
     assert account.daily_posts_sent == 0
     assert account.daily_dms_sent == 0
@@ -270,22 +409,17 @@ async def test_quota_reset_worker(db_session: Session, monkeypatch: pytest.Monke
 
 @pytest.mark.anyio
 async def test_scheduler_lifecycle():
-    from app.automation.scheduler import (
-        get_scheduler,
-    )
-
-    # 1. Start within active event loop
     start_scheduler()
     sched = get_scheduler()
     assert sched.running is True
 
-    # 2. Verify all 3 worker jobs are scheduled
+    # Verify all 4 background automation worker jobs are scheduled
     job_ids = [job.id for job in sched.get_jobs()]
     assert "post_dispatcher_job" in job_ids
+    assert "dm_dispatcher_job" in job_ids
     assert "watcher_worker_job" in job_ids
     assert "quota_reset_job" in job_ids
 
-    # 3. Stop scheduler and yield one tick to event loop for _shutdown callback
     stop_scheduler()
     await asyncio.sleep(0.01)
     assert sched.running is False

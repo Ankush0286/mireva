@@ -3,6 +3,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+from app.automation.workers.dm_dispatcher import run_dm_dispatcher
 from app.automation.workers.post_dispatcher import run_post_dispatcher
 from app.automation.workers.quota_reset_worker import run_quota_reset_worker
 from app.automation.workers.watcher_worker import run_watcher_worker
@@ -40,6 +41,15 @@ def register_automation_jobs() -> None:
 
     scheduler.add_job(
         _safe_job_wrapper,
+        trigger=IntervalTrigger(seconds=60),
+        args=[run_dm_dispatcher, "DmDispatcher"],
+        id="dm_dispatcher_job",
+        name="Cold DM Dispatcher",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        _safe_job_wrapper,
         trigger=IntervalTrigger(minutes=5),
         args=[run_watcher_worker, "WatcherWorker"],
         id="watcher_worker_job",
@@ -56,7 +66,7 @@ def register_automation_jobs() -> None:
         replace_existing=True,
     )
 
-    logger.info("Registered 3 background automation worker jobs.")
+    logger.info("Registered 4 background automation worker jobs.")
 
 
 def start_scheduler() -> None:

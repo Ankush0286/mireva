@@ -1,8 +1,12 @@
+import json
+import re
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
+from app.agent.browser_agent import read_and_summarize_inbox, scout_influencer_leads
 from app.common.enums import (
     LeadStage,
     LeadTier,
@@ -10,6 +14,8 @@ from app.common.enums import (
     PlatformType,
 )
 from app.db.dependencies import get_db_session
+from app.modules.accounts.service import AccountService
+from app.modules.outreach.commands import CreateLeadCommand
 from app.modules.outreach.schemas import (
     LeadCreateRequest,
     LeadResponse,
@@ -20,6 +26,8 @@ from app.modules.outreach.schemas import (
     OutreachCampaignResponse,
     OutreachCampaignUpdateRequest,
     OutreachMessageResponse,
+    ScoutLeadsRequest,
+    ScoutLeadsResponse,
 )
 from app.modules.outreach.service import OutreachService
 
@@ -269,3 +277,87 @@ def delete_message(
     service: OutreachService = Depends(get_outreach_service),
 ) -> None:
     service.delete_message(message_id)
+
+
+
+
+@router.post(
+    "/scout",
+    response_model=ScoutLeadsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Deploy autonomous Browser AI Agent to scout & vet creator leads into CRM",
+)
+async def scout_creators_endpoint(
+    payload: ScoutLeadsRequest,
+    service: OutreachService = Depends(get_outreach_service),
+    db: Session = Depends(get_db_session),
+) -> ScoutLeadsResponse:
+    account = AccountService(db).get_by_id_or_raise(payload.account_id)
+
+    raw_report = await scout_influencer_leads(
+        account=account,
+        niche_or_query=payload.niche_or_query,
+        max_leads=payload.max_leads,
+        headless=True,
+    )
+
+    # Parse structured JSON array from agent's response
+    parsed_leads: list[dict[str, Any]] = []
+    json_match = re.search(r"\[[\s\S]*\]", raw_report)
+    if json_match:
+        try:
+            parsed_leads = json.loads(json_match.group(0))
+        except Exception:
+            pass
+
+    imported_count = 0
+    if payload.auto_import and parsed_leads:
+        for item in parsed_leads:
+            handle = str(item.get("handle", "")).lstrip("@").strip()
+            if not handle:
+                continue
+            existing = service.get_lead_by_platform_and_handle(account.platform, handle)
+            if existing:
+                continue
+
+            try:
+                service.create_lead(
+                    CreateLeadCommand(
+                        platform=account.platform,
+                        handle=handle,
+                        display_name=item.get("display_name"),
+                        bio=item.get("bio"),
+                        follower_count=item.get("follower_count"),
+                        tier=LeadTier.MICRO if (item.get("follower_count") or 0) > 10000 else LeadTier.NANO,
+                        tags=[payload.niche_or_query.lstrip("#")],
+                        notes=f"AI Scout fit: {item.get('reason', 'N/A')}",
+                    )
+                )
+                imported_count += 1
+            except Exception:
+                continue
+
+    return ScoutLeadsResponse(
+        niche=payload.niche_or_query,
+        discovered_count=len(parsed_leads),
+        imported_count=imported_count,
+        leads=parsed_leads,
+    )
+
+
+@router.post(
+    "/sweep-inbox",
+    status_code=status.HTTP_200_OK,
+    summary="Deploy Browser AI Agent to read direct messages and summarize replies",
+)
+async def sweep_inbox_endpoint(
+    account_id: UUID,
+    db: Session = Depends(get_db_session),
+) -> dict[str, Any]:
+    account = AccountService(db).get_by_id_or_raise(account_id)
+    summary = await read_and_summarize_inbox(account=account, headless=True)
+    return {
+        "account": account.handle,
+        "platform": account.platform.value,
+        "summary": summary,
+    }

@@ -228,3 +228,17 @@ class OutreachMessageResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ScoutLeadsRequest(BaseModel):
+    account_id: UUID = Field(..., description="ConnectedAccount used for browser scouting")
+    niche_or_query: str = Field(..., min_length=2, max_length=100, examples=["ai website builder", "#saas"])
+    max_leads: int = Field(default=5, ge=1, le=15)
+    auto_import: bool = Field(default=True, description="Automatically save vetted prospects to CRM")
+
+
+class ScoutLeadsResponse(BaseModel):
+    niche: str
+    discovered_count: int
+    imported_count: int
+    leads: list[dict[str, Any]]

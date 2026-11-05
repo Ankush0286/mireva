@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, patch
+
 from fastapi.testclient import TestClient
 
 
@@ -199,3 +201,55 @@ def test_review_message_invalid_status_returns_422(client: TestClient):
     )
     assert res.status_code == 422
     assert res.json()["error"] == "VALIDATION_ERROR"
+
+def test_scout_creators_api_endpoint(client: TestClient):
+    account_id = _create_account_via_api(client, "scout_tester_bot")
+
+    mock_scout_json = (
+        '[\n'
+        '  {"handle": "indie_founder_1", "display_name": "Indie Founder", "bio": "Building SaaS", "follower_count": 18000, "reason": "SaaS founder"},\n'
+        '  {"handle": "devtool_creator", "display_name": "Dev Creator", "bio": "Dev tools reviewer", "follower_count": 32000, "reason": "High engagement"}\n'
+        ']'
+    )
+
+    with patch("app.modules.outreach.router.scout_influencer_leads", new_callable=AsyncMock) as mock_scout:
+        mock_scout.return_value = mock_scout_json
+
+        res = client.post(
+            "/api/v1/outreach/scout",
+            json={
+                "account_id": account_id,
+                "niche_or_query": "ai website builder",
+                "max_leads": 5,
+                "auto_import": True,
+            },
+        )
+        assert res.status_code == 200
+        data = res.json()
+
+        assert data["niche"] == "ai website builder"
+        assert data["discovered_count"] == 2
+        assert data["imported_count"] == 2
+        assert len(data["leads"]) == 2
+
+    # Verify leads were automatically persisted in CRM
+    leads_res = client.get("/api/v1/outreach/leads")
+    assert leads_res.status_code == 200
+    crm_handles = [item["handle"] for item in leads_res.json()]
+    assert "indie_founder_1" in crm_handles
+    assert "devtool_creator" in crm_handles
+
+
+def test_sweep_inbox_api_endpoint(client: TestClient):
+    account_id = _create_account_via_api(client, "inbox_checker_bot")
+
+    mock_summary = "Checked inbox: Found 1 unread reply from @billgates saying 'Sounds interesting, tell me more.'"
+
+    with patch("app.modules.outreach.router.read_and_summarize_inbox", new_callable=AsyncMock) as mock_inbox:
+        mock_inbox.return_value = mock_summary
+
+        res = client.post(f"/api/v1/outreach/sweep-inbox?account_id={account_id}")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["account"] == "inbox_checker_bot"
+        assert data["summary"] == mock_summary

@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.automation.scheduler import get_scheduler
+from app.automation.workers.dm_dispatcher import run_dm_dispatcher
 from app.automation.workers.post_dispatcher import run_post_dispatcher
 from app.automation.workers.quota_reset_worker import run_quota_reset_worker
 from app.automation.workers.watcher_worker import run_watcher_worker
@@ -57,12 +58,44 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": True,
         "description": "Standard photo/video feed post workflow with crop, filter, and caption steps.",
         "steps": [
-            {"type": "click", "description": "Click Create button", "selectors": ["svg[aria-label='New post']", "[aria-label='Create']"]},
-            {"type": "upload", "description": "Upload media file", "target": "input[type='file']", "variable": "media_path"},
-            {"type": "click", "description": "Advance Crop screen", "selectors": ["button:has-text('Next')", "[role='button']:has-text('Next')"]},
-            {"type": "click", "description": "Advance Filter screen", "selectors": ["button:has-text('Next')", "[role='button']:has-text('Next')"]},
-            {"type": "type", "description": "Type post caption", "variable": "content", "selectors": ["div[aria-label='Write a caption...']", "[role='dialog'] div[role='textbox']"]},
-            {"type": "click", "description": "Click Share", "selectors": ["[role='dialog'] button:has-text('Share')", "[role='dialog'] div[role='button']:has-text('Share')"]},
+            {
+                "type": "click",
+                "description": "Click Create button",
+                "selectors": ["svg[aria-label='New post']", "[aria-label='Create']"],
+            },
+            {
+                "type": "upload",
+                "description": "Upload media file",
+                "target": "input[type='file']",
+                "variable": "media_path",
+            },
+            {
+                "type": "click",
+                "description": "Advance Crop screen",
+                "selectors": ["button:has-text('Next')", "[role='button']:has-text('Next')"],
+            },
+            {
+                "type": "click",
+                "description": "Advance Filter screen",
+                "selectors": ["button:has-text('Next')", "[role='button']:has-text('Next')"],
+            },
+            {
+                "type": "type",
+                "description": "Type post caption",
+                "variable": "content",
+                "selectors": [
+                    "div[aria-label='Write a caption...']",
+                    "[role='dialog'] div[role='textbox']",
+                ],
+            },
+            {
+                "type": "click",
+                "description": "Click Share",
+                "selectors": [
+                    "[role='dialog'] button:has-text('Share')",
+                    "[role='dialog'] div[role='button']:has-text('Share')",
+                ],
+            },
         ],
     },
     {
@@ -72,9 +105,29 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": False,
         "description": "Navigates to target profile, opens message thread, and dispatches personalized DM.",
         "steps": [
-            {"type": "click", "description": "Click profile Message button", "selectors": ["header button:has-text('Message')", "div[role='button']:has-text('Message')"]},
-            {"type": "type", "description": "Type DM message", "variable": "content", "selectors": ["div[aria-label='Message']", "div[role='textbox'][contenteditable='true']"]},
-            {"type": "click", "description": "Send message", "selectors": ["button:has-text('Send')", "div[role='button']:has-text('Send')"], "optional": True},
+            {
+                "type": "click",
+                "description": "Click profile Message button",
+                "selectors": [
+                    "header button:has-text('Message')",
+                    "div[role='button']:has-text('Message')",
+                ],
+            },
+            {
+                "type": "type",
+                "description": "Type DM message",
+                "variable": "content",
+                "selectors": [
+                    "div[aria-label='Message']",
+                    "div[role='textbox'][contenteditable='true']",
+                ],
+            },
+            {
+                "type": "click",
+                "description": "Send message",
+                "selectors": ["button:has-text('Send')", "div[role='button']:has-text('Send')"],
+                "optional": True,
+            },
         ],
     },
     {
@@ -84,9 +137,22 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": False,
         "description": "Opens post URL, focuses comment input, types contextual response, and submits.",
         "steps": [
-            {"type": "click", "description": "Focus comment input", "selectors": ["textarea[aria-label='Add a comment...']", "form textarea"]},
-            {"type": "type", "description": "Type comment copy", "variable": "content", "selectors": ["textarea[aria-label='Add a comment...']", "form textarea"]},
-            {"type": "click", "description": "Post comment", "selectors": ["button:has-text('Post')", "div[role='button']:has-text('Post')"]},
+            {
+                "type": "click",
+                "description": "Focus comment input",
+                "selectors": ["textarea[aria-label='Add a comment...']", "form textarea"],
+            },
+            {
+                "type": "type",
+                "description": "Type comment copy",
+                "variable": "content",
+                "selectors": ["textarea[aria-label='Add a comment...']", "form textarea"],
+            },
+            {
+                "type": "click",
+                "description": "Post comment",
+                "selectors": ["button:has-text('Post')", "div[role='button']:has-text('Post')"],
+            },
         ],
     },
     {
@@ -96,9 +162,25 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": True,
         "description": "Standard X/Twitter compose and publish workflow.",
         "steps": [
-            {"type": "click", "description": "Focus Tweet Compose Box", "selectors": ["div[data-testid='tweetTextarea_0']"]},
-            {"type": "type", "description": "Type Tweet copy", "variable": "content", "selectors": ["div[data-testid='tweetTextarea_0']"]},
-            {"type": "click", "description": "Click Post button", "selectors": ["button[data-testid='tweetButtonInline']", "button[data-testid='tweetButton']"]},
+            {
+                "type": "click",
+                "description": "Focus Tweet Compose Box",
+                "selectors": ["div[data-testid='tweetTextarea_0']"],
+            },
+            {
+                "type": "type",
+                "description": "Type Tweet copy",
+                "variable": "content",
+                "selectors": ["div[data-testid='tweetTextarea_0']"],
+            },
+            {
+                "type": "click",
+                "description": "Click Post button",
+                "selectors": [
+                    "button[data-testid='tweetButtonInline']",
+                    "button[data-testid='tweetButton']",
+                ],
+            },
         ],
     },
     {
@@ -108,9 +190,22 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": False,
         "description": "Dispatches direct message from target user's X profile.",
         "steps": [
-            {"type": "click", "description": "Click send DM from profile", "selectors": ["button[data-testid='sendDMFromProfile']"]},
-            {"type": "type", "description": "Type DM copy", "variable": "content", "selectors": ["div[data-testid='dmComposerTextInput']"]},
-            {"type": "click", "description": "Click DM Send button", "selectors": ["button[data-testid='dmComposerSendButton']"]},
+            {
+                "type": "click",
+                "description": "Click send DM from profile",
+                "selectors": ["button[data-testid='sendDMFromProfile']"],
+            },
+            {
+                "type": "type",
+                "description": "Type DM copy",
+                "variable": "content",
+                "selectors": ["div[data-testid='dmComposerTextInput']"],
+            },
+            {
+                "type": "click",
+                "description": "Click DM Send button",
+                "selectors": ["button[data-testid='dmComposerSendButton']"],
+            },
         ],
     },
     {
@@ -120,9 +215,22 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
         "is_default": False,
         "description": "Submits auto-reply on target tweet for keyword trigger rules.",
         "steps": [
-            {"type": "click", "description": "Focus reply box", "selectors": ["div[data-testid='tweetTextarea_0']", "div[role='textbox']"]},
-            {"type": "type", "description": "Type reply copy", "variable": "content", "selectors": ["div[data-testid='tweetTextarea_0']", "div[role='textbox']"]},
-            {"type": "click", "description": "Submit reply", "selectors": ["button[data-testid='tweetButtonInline']"]},
+            {
+                "type": "click",
+                "description": "Focus reply box",
+                "selectors": ["div[data-testid='tweetTextarea_0']", "div[role='textbox']"],
+            },
+            {
+                "type": "type",
+                "description": "Type reply copy",
+                "variable": "content",
+                "selectors": ["div[data-testid='tweetTextarea_0']", "div[role='textbox']"],
+            },
+            {
+                "type": "click",
+                "description": "Submit reply",
+                "selectors": ["button[data-testid='tweetButtonInline']"],
+            },
         ],
     },
 ]
@@ -199,12 +307,8 @@ class SystemDiagnosticsService:
         openrouter_key = settings.OPENROUTER_API_KEY.get_secret_value().strip()
         fireworks_key = settings.FIREWORKS_API_KEY.get_secret_value().strip()
 
-        has_openrouter = bool(
-            openrouter_key and not openrouter_key.startswith("sk-or-placeholder")
-        )
-        has_fireworks = bool(
-            fireworks_key and not fireworks_key.startswith("fw-placeholder")
-        )
+        has_openrouter = bool(openrouter_key and not openrouter_key.startswith("sk-or-placeholder"))
+        has_fireworks = bool(fireworks_key and not fireworks_key.startswith("fw-placeholder"))
         has_key = has_openrouter or has_fireworks
 
         active_provider = (
@@ -277,10 +381,16 @@ class SystemDiagnosticsService:
                     if action_key == "publish_post" and (r.is_default or "post" in r.name.lower()):
                         matched_recipe = r
                         break
-                    if action_key == "send_dm" and "dm" in r.name.lower() and "inbox" not in r.name.lower():
+                    if (
+                        action_key == "send_dm"
+                        and "dm" in r.name.lower()
+                        and "inbox" not in r.name.lower()
+                    ):
                         matched_recipe = r
                         break
-                    if action_key == "comment_reply" and ("comment" in r.name.lower() or "reply" in r.name.lower()):
+                    if action_key == "comment_reply" and (
+                        "comment" in r.name.lower() or "reply" in r.name.lower()
+                    ):
                         matched_recipe = r
                         break
 
@@ -366,11 +476,7 @@ class SystemDiagnosticsService:
 
         statuses = [s.status for s in subsystems]
         overall: HealthStatus = (
-            "error"
-            if "error" in statuses
-            else "warning"
-            if "warning" in statuses
-            else "healthy"
+            "error" if "error" in statuses else "warning" if "warning" in statuses else "healthy"
         )
 
         entity_counts = {
@@ -491,6 +597,16 @@ class SystemDiagnosticsService:
                 status="completed",
                 items_processed=count,
                 message=f"Quota Reset & Sync executed ({count} accounts reset).",
+            )
+
+        if clean_name == "dm_dispatcher":
+
+            count = await run_dm_dispatcher(db=self.db)
+            return WorkerTriggerResponse(
+                worker="dm_dispatcher",
+                status="completed",
+                items_processed=count,
+                message=f"Cold DM Dispatcher executed ({count} approved DMs dispatched).",
             )
 
         raise AppError(
