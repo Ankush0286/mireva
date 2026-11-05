@@ -1,10 +1,14 @@
 import logging
-from dataclasses import dataclass
+import threading
+from collections.abc import Generator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openrouter import OpenRouterModel
 from pydantic_ai.providers.openrouter import OpenRouterProvider
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.agent.prompts import MARKETING_AGENT_SYSTEM_PROMPT
@@ -14,12 +18,28 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+
+
 @dataclass
 class AgentDeps:
     """Dependency container injected into every tool call."""
 
     db: Session
     session_id: UUID | None = None
+    _db_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+
+    @contextmanager
+    def db_session_scope(self) -> Generator[Session, None, None]:
+        """
+        Serializes concurrent tool access to the SQLAlchemy Session across worker
+        threads so parallel tool calls never collide mid-commit ('prepared' state).
+        """
+        with self._db_lock:
+            try:
+                yield self.db
+            except SQLAlchemyError:
+                self.db.rollback()
+                raise
 
 
 def get_openrouter_model(model_name: str | None = None) -> OpenRouterModel:

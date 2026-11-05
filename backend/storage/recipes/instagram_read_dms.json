@@ -1,0 +1,14 @@
+[
+  {
+    "type": "click",
+    "description": "Click \"7 minutes ago\"",
+    "selectors": [
+      "[aria-label=\"7 minutes ago\"]",
+      "[role=\"button\"]:has-text(\"billgates\nYou: hello\n\u00a0\n\u00b7\n7m\")",
+      "button:has-text(\"billgates\nYou: hello\n\u00a0\n\u00b7\n7m\")",
+      "div[role=\"button\"]:has-text(\"billgates\nYou: hello\n\u00a0\n\u00b7\n7m\")"
+    ],
+    "target": null,
+    "variable": null
+  }
+]

@@ -25,19 +25,20 @@ def add_competitor_to_watch(
     Adds a competitor or target influencer profile to the scraping watch list.
     """
     try:
-        service = TriggerService(ctx.deps.db)
-        cmd = AddWatchedHandleCommand(
-            platform=PlatformType(platform.lower()),
-            handle=handle,
-            display_name=display_name,
-        )
-        watched = service.add_watched_handle(cmd)
-        return {
-            "id": str(watched.id),
-            "platform": watched.platform.value,
-            "handle": watched.handle,
-            "scrape_frequency_minutes": watched.scrape_frequency_minutes,
-        }
+        with ctx.deps.db_session_scope() as db:
+            service = TriggerService(db)
+            cmd = AddWatchedHandleCommand(
+                platform=PlatformType(platform.lower()),
+                handle=handle,
+                display_name=display_name,
+            )
+            watched = service.add_watched_handle(cmd)
+            return {
+                "id": str(watched.id),
+                "platform": watched.platform.value,
+                "handle": watched.handle,
+                "scrape_frequency_minutes": watched.scrape_frequency_minutes,
+            }
     except (AppError, ValueError) as exc:
         return {"error": str(exc)}
 
@@ -58,25 +59,26 @@ def create_keyword_trigger_rule(
     when specified keywords appear in competitor feeds.
     """
     try:
-        service = TriggerService(ctx.deps.db)
-        cmd = CreateTriggerRuleCommand(
-            name=name,
-            platform=PlatformType(platform.lower()),
-            account_id=UUID(account_id),
-            action_type=TriggerActionType.STAGE_DRAFT,
-            keywords_any=keywords_any,
-            keywords_all=keywords_all or [],
-            keywords_exclude=keywords_exclude or [],
-            response_template=response_template,
-        )
-        rule = service.create_rule(cmd)
-        return {
-            "id": str(rule.id),
-            "name": rule.name,
-            "platform": rule.platform.value,
-            "keywords_any": rule.keywords_any,
-            "action_type": rule.action_type.value,
-        }
+        with ctx.deps.db_session_scope() as db:
+            service = TriggerService(db)
+            cmd = CreateTriggerRuleCommand(
+                name=name,
+                platform=PlatformType(platform.lower()),
+                account_id=UUID(account_id),
+                action_type=TriggerActionType.STAGE_DRAFT,
+                keywords_any=keywords_any,
+                keywords_all=keywords_all or [],
+                keywords_exclude=keywords_exclude or [],
+                response_template=response_template,
+            )
+            rule = service.create_rule(cmd)
+            return {
+                "id": str(rule.id),
+                "name": rule.name,
+                "platform": rule.platform.value,
+                "keywords_any": rule.keywords_any,
+                "action_type": rule.action_type.value,
+            }
     except (AppError, ValueError) as exc:
         return {"error": str(exc)}
 
@@ -93,17 +95,18 @@ def review_intercepted_match(
     If approved, you can supply a custom refined response copy.
     """
     try:
-        service = TriggerService(ctx.deps.db)
-        cmd = ReviewMatchCommand(
-            match_id=UUID(match_id),
-            status=TriggerMatchStatus.APPROVED if approve else TriggerMatchStatus.IGNORED,
-            edited_response=edited_response,
-        )
-        reviewed = service.review_match(cmd)
-        return {
-            "id": str(reviewed.id),
-            "status": reviewed.status.value,
-            "generated_response": reviewed.generated_response,
-        }
+        with ctx.deps.db_session_scope() as db:
+            service = TriggerService(db)
+            cmd = ReviewMatchCommand(
+                match_id=UUID(match_id),
+                status=TriggerMatchStatus.APPROVED if approve else TriggerMatchStatus.IGNORED,
+                edited_response=edited_response,
+            )
+            reviewed = service.review_match(cmd)
+            return {
+                "id": str(reviewed.id),
+                "status": reviewed.status.value,
+                "generated_response": reviewed.generated_response,
+            }
     except (AppError, ValueError) as exc:
         return {"error": str(exc)}

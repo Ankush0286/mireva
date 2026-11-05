@@ -17,20 +17,21 @@ async def list_marketing_data_sources(
     Lists all connected external marketing data sources (Google Search Console,
     Ahrefs, GA4, PostHog, etc.) and their health status.
     """
-    service = ConnectorService(ctx.deps.db)
-    connectors = service.list_connectors(active_only=active_only)
+    with ctx.deps.db_session_scope() as db:
+        service = ConnectorService(db)
+        connectors = service.list_connectors(active_only=active_only)
 
-    return [
-        {
-            "id": str(c.id),
-            "name": c.name,
-            "provider": c.connector_type.value,
-            "target": c.target_identifier,
-            "status": c.status.value,
-            "last_synced_at": c.last_synced_at.isoformat() if c.last_synced_at else None,
-        }
-        for c in connectors
-    ]
+        return [
+            {
+                "id": str(c.id),
+                "name": c.name,
+                "provider": c.connector_type.value,
+                "target": c.target_identifier,
+                "status": c.status.value,
+                "last_synced_at": c.last_synced_at.isoformat() if c.last_synced_at else None,
+            }
+            for c in connectors
+        ]
 
 
 @marketing_agent.tool
@@ -43,32 +44,31 @@ async def get_search_console_opportunities(
     """
     Pulls high-impression, low-CTR keywords from Google Search Console ranking
     between positions 4 and 20 (striking-distance content opportunities).
-    Use these keywords to draft high-ranking posts, threads, or blog outlines.
     """
     try:
-        service = ConnectorService(ctx.deps.db)
-        connectors = service.list_connectors(
-            connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE, active_only=True
-        )
+        with ctx.deps.db_session_scope() as db:
+            service = ConnectorService(db)
+            connectors = service.list_connectors(
+                connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE, active_only=True
+            )
 
-        if not connectors:
-            return [{"warning": "No active Google Search Console connector found in workspace."}]
+            if not connectors:
+                return [{"warning": "No active Google Search Console connector found in workspace."}]
 
-        # Match specific site or use primary connector
-        target_connector = connectors[0]
-        if site_url:
-            for c in connectors:
-                if site_url.lower() in c.target_identifier.lower():
-                    target_connector = c
-                    break
+            target_connector = connectors[0]
+            if site_url:
+                for c in connectors:
+                    if site_url.lower() in c.target_identifier.lower():
+                        target_connector = c
+                        break
 
-        opportunities = await service.fetch_opportunities(
-            connector_id=target_connector.id,
-            min_impressions=min_impressions,
-            limit=limit,
-        )
+            opportunities = await service.fetch_opportunities(
+                connector_id=target_connector.id,
+                min_impressions=min_impressions,
+                limit=limit,
+            )
 
-        return [opp.model_dump() for opp in opportunities]
+            return [opp.model_dump() for opp in opportunities]
     except (AppError, Exception) as exc:
         return [{"error": str(exc)}]
 
@@ -82,36 +82,36 @@ async def get_competitor_keyword_gaps(
 ) -> list[dict[str, Any]]:
     """
     Queries SEO intelligence (Ahrefs / DataForSEO) for competitor organic keywords
-    with commercial intent. These can be added as keyword rules to intercept conversations.
+    with commercial intent.
     """
     try:
-        service = ConnectorService(ctx.deps.db)
-        connectors = service.list_connectors(
-            connector_type=ConnectorType.AHREFS, active_only=True
-        )
-
-        if not connectors:
-            # Fallback check for DATAFORSEO
+        with ctx.deps.db_session_scope() as db:
+            service = ConnectorService(db)
             connectors = service.list_connectors(
-                connector_type=ConnectorType.DATAFORSEO, active_only=True
+                connector_type=ConnectorType.AHREFS, active_only=True
             )
 
-        if not connectors:
-            return [{"warning": "No active Ahrefs or DataForSEO connector configured in workspace."}]
+            if not connectors:
+                connectors = service.list_connectors(
+                    connector_type=ConnectorType.DATAFORSEO, active_only=True
+                )
 
-        target_connector = connectors[0]
-        if competitor_domain:
-            for c in connectors:
-                if competitor_domain.lower() in c.target_identifier.lower():
-                    target_connector = c
-                    break
+            if not connectors:
+                return [{"warning": "No active Ahrefs or DataForSEO connector configured in workspace."}]
 
-        gaps = await service.fetch_opportunities(
-            connector_id=target_connector.id,
-            min_impressions=min_volume,
-            limit=limit,
-        )
+            target_connector = connectors[0]
+            if competitor_domain:
+                for c in connectors:
+                    if competitor_domain.lower() in c.target_identifier.lower():
+                        target_connector = c
+                        break
 
-        return [item.model_dump() for item in gaps]
+            gaps = await service.fetch_opportunities(
+                connector_id=target_connector.id,
+                min_impressions=min_volume,
+                limit=limit,
+            )
+
+            return [item.model_dump() for item in gaps]
     except (AppError, Exception) as exc:
         return [{"error": str(exc)}]

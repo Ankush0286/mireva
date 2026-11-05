@@ -68,7 +68,9 @@ class InstagramAdapter(BasePlatformAdapter):
             storage_state_path=storage_state_path if storage_state_path.exists() else None,
         )
 
-        self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
+        self._page = (
+            self._context.pages[0] if self._context.pages else await self._context.new_page()
+        )
         return self._page
 
     async def _dismiss_popups(self, page: Page) -> None:
@@ -107,7 +109,9 @@ class InstagramAdapter(BasePlatformAdapter):
 
         create_btn = page.locator(selectors.NAV_CREATE_BUTTON).first
         if await create_btn.is_visible():
-            logger.info("Account @%s already authenticated via persistent session.", self.account.handle)
+            logger.info(
+                "Account @%s already authenticated via persistent session.", self.account.handle
+            )
             if self._context:
                 await self.session_manager.save_session_state(self._context, self.account.id)
             return True
@@ -122,7 +126,10 @@ class InstagramAdapter(BasePlatformAdapter):
         try:
             await username_input.wait_for(state="visible", timeout=12000)
         except Exception:
-            logger.warning("Instagram login form not visible for @%s after direct navigation.", self.account.handle)
+            logger.warning(
+                "Instagram login form not visible for @%s after direct navigation.",
+                self.account.handle,
+            )
             return False
 
         # 3. Decrypt password from vault
@@ -180,7 +187,9 @@ class InstagramAdapter(BasePlatformAdapter):
         page = await self._get_or_create_page()
         is_authenticated = await self.authenticate()
         if not is_authenticated:
-            raise InstagramAutomationError(f"Failed to authenticate session for @{self.account.handle}")
+            raise InstagramAutomationError(
+                f"Failed to authenticate session for @{self.account.handle}"
+            )
 
         logger.info("Opening post creation modal for @%s...", self.account.handle)
 
@@ -254,7 +263,9 @@ class InstagramAdapter(BasePlatformAdapter):
             raise InstagramAutomationError("Post upload confirmation not detected within timeout.")
 
         generated_id = f"ig_{uuid.uuid4().hex[:12]}"
-        logger.info("✅ Post successfully published for @%s (ID: %s)", self.account.handle, generated_id)
+        logger.info(
+            "✅ Post successfully published for @%s (ID: %s)", self.account.handle, generated_id
+        )
 
         if self._context:
             await self.session_manager.save_session_state(self._context, self.account.id)
@@ -273,41 +284,81 @@ class InstagramAdapter(BasePlatformAdapter):
         recipient_handle: str,
         message_text: str,
     ) -> str:
-        """Sends a private direct message to an Instagram user."""
+        """Sends a private direct message to an Instagram user using recorded recipe or native fallback."""
+        import json
+        from pathlib import Path
+
+        from app.platforms.browser.action_recipe import ActionRecipeRunner
+
         clean_handle = recipient_handle.lstrip("@").strip()
         page = await self._get_or_create_page()
         is_authenticated = await self.authenticate()
         if not is_authenticated:
-            raise InstagramAutomationError(f"Failed to authenticate session for @{self.account.handle}")
+            raise InstagramAutomationError(
+                f"Failed to authenticate session for @{self.account.handle}"
+            )
 
         logger.info("Navigating to profile @%s to dispatch DM...", clean_handle)
         await page.goto(f"https://www.instagram.com/{clean_handle}/", wait_until="domcontentloaded")
         await random_delay(2.5, 4.0)
         await self._dismiss_popups(page)
 
-        # Click Message button on profile header
+        # 1. Check if a recorded Default Recipe exists for instagram_send_dm
+        recipe_file = Path("storage/recipes/instagram_send_dm.json")
+        if recipe_file.exists():
+            try:
+                steps = json.loads(recipe_file.read_text(encoding="utf-8"))
+                if steps:
+                    logger.info(
+                        "Executing recorded instagram_send_dm.json recipe for @%s...", clean_handle
+                    )
+                    runner = ActionRecipeRunner(page)
+                    await runner.execute_recipe(steps, variables={"content": message_text})
+                    await random_delay(2.0, 3.0)
+                    parsed_url = urlparse(page.url)
+                    thread_id = (
+                        parsed_url.path.strip("/").split("/")[-1]
+                        if "direct/t/" in page.url
+                        else "recipe_dm_sent"
+                    )
+                    if self._context:
+                        await self.session_manager.save_session_state(
+                            self._context, self.account.id
+                        )
+                    return thread_id
+            except Exception as recipe_exc:
+                logger.warning(
+                    "Recorded send_dm recipe failed (%s), falling back to native selectors...",
+                    recipe_exc,
+                )
+
+        # 2. Native Selector Fallback
         msg_btn = page.locator(selectors.PROFILE_MESSAGE_BUTTON).first
         if not await msg_btn.is_visible():
-            raise InstagramAutomationError(f"Message button not found on @{clean_handle}'s profile.")
+            raise InstagramAutomationError(
+                f"Message button not found on @{clean_handle}'s profile."
+            )
 
         await msg_btn.click()
         await random_delay(3.0, 5.0)
         await self._dismiss_popups(page)
 
-        # Locate chat input
         dm_input = page.locator(selectors.DM_INPUT_TEXTBOX).first
         await dm_input.wait_for(state="visible", timeout=15000)
         await dm_input.click()
         await random_delay(0.5, 1.0)
 
-        # Type message with human jitter and press Enter
         await page.keyboard.insert_text(message_text)
         await random_delay(0.8, 1.5)
         await page.keyboard.press("Enter")
         await random_delay(2.0, 3.5)
 
         parsed_url = urlparse(page.url)
-        thread_id = parsed_url.path.strip("/").split("/")[-1] if "direct/t/" in page.url else "unknown_thread"
+        thread_id = (
+            parsed_url.path.strip("/").split("/")[-1]
+            if "direct/t/" in page.url
+            else "unknown_thread"
+        )
         logger.info("✅ DM successfully sent to @%s in thread %s", clean_handle, thread_id)
 
         if self._context:
@@ -325,7 +376,9 @@ class InstagramAdapter(BasePlatformAdapter):
         page = await self._get_or_create_page()
         is_authenticated = await self.authenticate()
         if not is_authenticated:
-            raise InstagramAutomationError(f"Failed to authenticate session for @{self.account.handle}")
+            raise InstagramAutomationError(
+                f"Failed to authenticate session for @{self.account.handle}"
+            )
 
         logger.info("Scraping grid for target profile @%s...", clean_handle)
         await page.goto(f"https://www.instagram.com/{clean_handle}/", wait_until="domcontentloaded")

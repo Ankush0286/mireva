@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,6 +17,7 @@ from app.agent.tools.campaign_tools import (
     draft_campaign,
     list_pending_posts,
     queue_social_post,
+    schedule_existing_post,
 )
 from app.agent.tools.connector_tools import (
     get_competitor_keyword_gaps,
@@ -24,6 +26,8 @@ from app.agent.tools.connector_tools import (
 )
 from app.agent.tools.outreach_tools import (
     add_lead_to_crm,
+    dispatch_dm_now,
+    list_crm_leads,
     review_staged_dm,
     stage_cold_outreach_dm,
 )
@@ -35,6 +39,8 @@ from app.agent.tools.trigger_tools import (
 from app.common.enums import ConnectorType, PlatformType
 from app.modules.accounts.commands import CreateAccountCommand
 from app.modules.accounts.service import AccountService
+from app.modules.brand.commands import UpdateBrandKitCommand
+from app.modules.brand.service import BrandService
 from app.modules.connectors.commands import CreateConnectorCommand
 from app.modules.connectors.schemas import MetricOpportunityItem
 from app.modules.connectors.service import ConnectorService
@@ -109,22 +115,26 @@ def test_campaign_tools_execution_and_error_handling(db_session: Session):
     assert camp_res["status"] == "active"
     campaign_id = camp_res["id"]
 
-    # 2. Queue a due social post
-    past_due_iso = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
-    post_res = queue_social_post(
+    # 2. Queue a draft post, then schedule it via schedule_existing_post
+    draft_post = queue_social_post(
         ctx,
         campaign_id=campaign_id,
         account_id=str(account.id),
-        content="Launching our new AI Marketing Agent today! 🚀",
-        scheduled_at_iso=past_due_iso,
+        content="Drafting our new AI Marketing Agent launch!",
     )
-    assert "id" in post_res
-    assert post_res["status"] == "scheduled"
+    assert draft_post["status"] == "draft"
 
-    # 3. List pending due posts
+    scheduled_res = schedule_existing_post(
+        ctx,
+        post_id=draft_post["id"],
+        scheduled_at_iso=(datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+    )
+    assert scheduled_res["status"] == "scheduled"
+
+    # 3. List pending posts
     pending = list_pending_posts(ctx, limit=5)
     assert len(pending) == 1
-    assert pending[0]["id"] == post_res["id"]
+    assert pending[0]["id"] == draft_post["id"]
 
     # 4. Graceful error recovery when queuing on nonexistent campaign
     err_res = queue_social_post(
@@ -184,7 +194,8 @@ def test_trigger_tools_execution_and_error_handling(db_session: Session):
 # =============================================================================
 
 
-def test_outreach_tools_execution_and_error_handling(db_session: Session):
+@pytest.mark.anyio
+async def test_outreach_tools_execution_and_error_handling(db_session: Session):
     ctx = _make_run_context(db_session)
     acc_service = AccountService(db_session)
     account = acc_service.create_account(
@@ -206,7 +217,12 @@ def test_outreach_tools_execution_and_error_handling(db_session: Session):
     assert lead_res["stage"] == "discovered"
     lead_id = lead_res["id"]
 
-    # 2. Stage cold outreach DM
+    # 2. List CRM leads
+    leads_list = list_crm_leads(ctx, platform="twitter")
+    assert len(leads_list) == 1
+    assert leads_list[0]["id"] == lead_id
+
+    # 3. Stage cold outreach DM
     stage_res = stage_cold_outreach_dm(
         ctx,
         lead_id=lead_id,
@@ -217,7 +233,7 @@ def test_outreach_tools_execution_and_error_handling(db_session: Session):
     assert stage_res["status"] == "staged"
     message_id = stage_res["id"]
 
-    # 3. Review and approve staged DM
+    # 4. Review and approve staged DM
     review_res = review_staged_dm(
         ctx,
         message_id=message_id,
@@ -227,23 +243,32 @@ def test_outreach_tools_execution_and_error_handling(db_session: Session):
     assert review_res["status"] == "approved"
     assert "Let's collaborate." in review_res["content"]
 
-    # 4. Graceful error recovery on duplicate lead import
+    # 5. Dispatch DM now (using mocked platform adapter)
+    mock_adapter = MagicMock()
+    mock_adapter.send_dm = AsyncMock(return_value="thread_xyz_999")
+    mock_adapter.close = AsyncMock()
+
+    with patch("app.agent.tools.outreach_tools.PlatformRegistry.get_adapter", return_value=mock_adapter):
+        dispatch_res = await dispatch_dm_now(ctx, message_id=message_id)
+        assert dispatch_res["status"] == "dispatched"
+        assert dispatch_res["platform_thread_id"] == "thread_xyz_999"
+
+    # 6. Graceful error recovery + existing ID return on duplicate lead import
     dup_err = add_lead_to_crm(
         ctx,
         platform="twitter",
         handle="tech_creator",
     )
     assert "error" in dup_err
+    assert dup_err["id"] == lead_id
 
 
 # =============================================================================
 # Brand Tools Unit Tests
 # =============================================================================
 
-def test_brand_tools_execution(db_session: Session):
-    from app.modules.brand.commands import UpdateBrandKitCommand
-    from app.modules.brand.service import BrandService
 
+def test_brand_tools_execution(db_session: Session):
     ctx = _make_run_context(db_session)
     brand_service = BrandService(db_session)
 
@@ -284,6 +309,7 @@ def test_brand_tools_execution(db_session: Session):
     personas_sec = get_brand_knowledge(ctx, section="personas")
     assert "target_personas" in personas_sec
     assert "tone_traits" not in personas_sec
+
 
 # =============================================================================
 # Data Connector Tools Unit Tests
@@ -333,10 +359,53 @@ async def test_connector_tools_execution_and_warnings(db_session: Session):
         )
     ]
 
-    with patch("app.modules.connectors.service.ConnectorService.fetch_opportunities", new_callable=AsyncMock) as mock_fetch:
+    with patch(
+        "app.modules.connectors.service.ConnectorService.fetch_opportunities",
+        new_callable=AsyncMock,
+    ) as mock_fetch:
         mock_fetch.return_value = mock_opps
 
         opps = await get_search_console_opportunities(ctx, min_impressions=500)
         assert len(opps) == 1
         assert opps[0]["query"] == "ai landing page builder"
         assert opps[0]["score"] == 79.5
+
+
+# =============================================================================
+# Parallel Tool Execution Thread-Safety Test
+# =============================================================================
+
+
+def test_parallel_tool_calls_thread_safety(db_session: Session):
+    """
+    Verifies that concurrent tool executions across multiple worker threads sharing
+    the same AgentDeps(db=db_session) serialize cleanly via db_session_scope()
+    without raising SQLAlchemy 'prepared' state collisions.
+    """
+    ctx = _make_run_context(db_session)
+
+    def _run_tool_1() -> Any:
+        return get_connected_accounts(ctx)
+
+    def _run_tool_2() -> Any:
+        return get_brand_knowledge(ctx)
+
+    def _run_tool_3() -> Any:
+        return add_lead_to_crm(ctx, platform="instagram", handle="parallel_lead_1")
+
+    def _run_tool_4() -> Any:
+        return list_crm_leads(ctx)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [
+            pool.submit(_run_tool_1),
+            pool.submit(_run_tool_2),
+            pool.submit(_run_tool_3),
+            pool.submit(_run_tool_4),
+        ]
+        results = [f.result() for f in futures]
+
+    assert len(results) == 4
+    assert isinstance(results[0], list)
+    assert "brand_name" in results[1]
+    assert results[2]["handle"] == "parallel_lead_1"
