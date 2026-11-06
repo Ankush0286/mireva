@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import { useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -32,9 +38,13 @@ import {
   ReasoningTrace,
   type ReasoningStep,
 } from "../../components/ReasoningTrace";
+import {
+  ApprovalCard,
+  type ApprovalDecision,
+} from "../../components/ApprovalCard";
 
 // ============================================================================
-// Pure Module-Level Helpers (Outside render scope for React Compiler compliance)
+// Pure Module-Level Helpers
 // ============================================================================
 
 const generateMessageId = (role: "user" | "assistant") =>
@@ -95,6 +105,40 @@ function parseModelOutput(rawContent: string): {
     cleanAnswer: rawContent,
     isCurrentlyThinking: false,
   };
+}
+
+function parseToolArguments(rawArgs: unknown): Record<string, any> {
+  if (!rawArgs || typeof rawArgs !== "object") return {};
+
+  const obj = rawArgs as Record<string, any>;
+  if ("arguments" in obj && typeof obj.arguments === "string") {
+    try {
+      return JSON.parse(obj.arguments);
+    } catch {
+      return obj;
+    }
+  }
+  if ("args" in obj && typeof obj.args === "string") {
+    try {
+      return JSON.parse(obj.args);
+    } catch {
+      return obj;
+    }
+  }
+  return obj;
+}
+
+function parseToolResult(output: unknown): Record<string, any> | null {
+  if (!output) return null;
+  if (typeof output === "object") return output as Record<string, any>;
+  if (typeof output === "string") {
+    try {
+      return JSON.parse(output);
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 // ============================================================================
@@ -193,19 +237,23 @@ export const ChatPage: React.FC<ChatPageProps> = ({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const [decisions, setDecisions] = useState<Record<string, ApprovalDecision>>(
+    {},
+  );
+  const [activeActionId, setActiveActionId] = useState<string | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const isStreamingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const initialPromptHandled = useRef(false);
 
-  // 1. TanStack Query for Models
   const { data: models = [] } = useQuery<ModelOption[]>({
     queryKey: ["copilot", "models"],
     queryFn: async () => {
       const fetched = await api.copilot.listModels();
       return fetched && fetched.length > 0 ? fetched : [];
     },
-    staleTime: 1000 * 60 * 30, // 30 minutes cache
+    staleTime: 1000 * 60 * 30,
   });
 
   const scrollToBottom = () => {
@@ -216,7 +264,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({
     scrollToBottom();
   }, [messages, isStreaming]);
 
-  // 2. Hydrate History when sessionId changes
   useEffect(() => {
     let isMounted = true;
 
@@ -275,7 +322,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({
     setIsStreaming(false);
   };
 
-  // 3. handleSendMessage wrapped in useCallback before any effect reads it
   const handleSendMessage = useCallback(
     async (promptText: string, modelId?: string, thinking?: boolean) => {
       const textToSend = promptText.trim();
@@ -402,7 +448,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({
     [sessionId, isStreaming, queryClient, onSessionCreated],
   );
 
-  // 4. Auto-Send Initial Prompt passed from Landing Page
   useEffect(() => {
     const passedPrompt = (location.state as any)?.initialPrompt;
     if (passedPrompt && !initialPromptHandled.current) {
@@ -411,6 +456,66 @@ export const ChatPage: React.FC<ChatPageProps> = ({
       window.history.replaceState({}, document.title);
     }
   }, [location.state, handleSendMessage]);
+
+  const handleApprovalDecision = async (
+    toolId: string,
+    actionType: string,
+    title: string,
+    entityId: string | undefined,
+    decision: ApprovalDecision,
+  ) => {
+    setActiveActionId(toolId);
+    setDecisions((prev) => ({ ...prev, [toolId]: decision }));
+
+    try {
+      if (decision === "approved") {
+        if (actionType === "outreach_dm" && entityId) {
+          await api.outreach.reviewMessage(entityId, { status: "approved" });
+          queryClient.invalidateQueries({ queryKey: queryKeys.outreach.all });
+          queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all });
+        } else if (actionType === "trigger_reply" && entityId) {
+          await api.triggers.reviewMatch(entityId, { status: "approved" });
+          queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all });
+        } else if (actionType === "publish_post" && entityId) {
+          await api.campaigns.updatePost(entityId, { status: "scheduled" });
+          queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
+        }
+
+        handleSendMessage(`I approved: "${title}". Please proceed.`);
+      } else {
+        if (actionType === "outreach_dm" && entityId) {
+          await api.outreach.reviewMessage(entityId, { status: "rejected" });
+          queryClient.invalidateQueries({ queryKey: queryKeys.outreach.all });
+        } else if (actionType === "trigger_reply" && entityId) {
+          await api.triggers.reviewMatch(entityId, { status: "ignored" });
+          queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all });
+        }
+
+        handleSendMessage(`I rejected: "${title}".`);
+      }
+    } catch (err) {
+      console.error("Failed to execute approval mutation:", err);
+    } finally {
+      setActiveActionId(null);
+    }
+  };
+
+  const latestPendingApproval = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === "assistant" && msg.turnTools) {
+        for (const tool of msg.turnTools) {
+          if (tool.tool_name === "request_human_approval") {
+            const decision = decisions[tool.id];
+            if (!decision) {
+              return tool;
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }, [messages, decisions]);
 
   return (
     <div className="relative h-full flex flex-col justify-between max-w-4xl mx-auto w-full font-sans select-none text-[#09122A] overflow-hidden">
@@ -593,14 +698,16 @@ export const ChatPage: React.FC<ChatPageProps> = ({
               return (
                 <div
                   key={msg.id}
-                  className="flex flex-col items-start space-y-2.5 w-full"
+                  className="flex flex-col items-start space-y-3 w-full"
                 >
+                  {/* Tool Execution Steps Accordion */}
                   {hasTools && (
                     <AgentSteps
                       steps={msg.turnTools!.map(fromToolExecutionLog)}
                     />
                   )}
 
+                  {/* Step-by-Step Chain-of-Thought Reasoning */}
                   {hasRealReasoning && (
                     <ReasoningTrace
                       status={isCurrentlyThinking ? "thinking" : "complete"}
@@ -609,6 +716,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
                     />
                   )}
 
+                  {/* Active Spinner */}
                   {isWaitingForStream && (
                     <LoadingState
                       label={
@@ -620,6 +728,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
                     />
                   )}
 
+                  {/* Synthesized Response Content */}
                   {hasTextContent && (
                     <div className="w-full rounded-[20px] bg-white/95 border border-[#DCE7F5] px-5 py-4 shadow-[0_6px_24px_-6px_rgba(14,58,117,0.06)]">
                       <StreamingText
@@ -697,8 +806,68 @@ export const ChatPage: React.FC<ChatPageProps> = ({
         )}
       </div>
 
-      {/* 2. Docked Bottom Prompt Composer */}
-      <div className="w-full max-w-3xl mx-auto pb-2 pt-1 px-3 sm:px-0 shrink-0 relative z-20">
+      {/* 2. Sticky Approval Card (Tucked behind the chatbox with zero gap) */}
+      {latestPendingApproval &&
+        (() => {
+          const tool = latestPendingApproval;
+          const args = parseToolArguments(tool.input_arguments);
+          const result = parseToolResult(tool.output_result) || {};
+
+          const actionType =
+            result.action_type || args.action_type || "general";
+          const title =
+            result.title || args.title || "Action Approval Required";
+          const entityId =
+            result.entity_id ||
+            result.id ||
+            args.entity_id ||
+            args.message_id ||
+            args.post_id;
+          const badgeLabel =
+            result.badge_label || args.badge_label || "Review Gate";
+
+          const badgeType =
+            actionType === "outreach_dm"
+              ? "outreach"
+              : actionType === "trigger_reply"
+                ? "trigger"
+                : actionType === "publish_post"
+                  ? "campaign"
+                  : "default";
+
+          const currentDecision = decisions[tool.id] ?? null;
+
+          return (
+            <div className="w-full max-w-3xl mx-auto px-3 sm:px-0 relative z-10 pb-2 animate-fade-up-1 shrink-0">
+              <ApprovalCard
+                badge={badgeLabel}
+                badgeType={badgeType}
+                title={title}
+                meta={`Agent Tool: ${tool.tool_name}${entityId ? ` · ID: ${entityId}` : ""}`}
+                approveLabel={
+                  actionType === "outreach_dm"
+                    ? "Approve & Dispatch"
+                    : "Approve Action"
+                }
+                rejectLabel="Dismiss"
+                decision={currentDecision}
+                isLoading={activeActionId === tool.id}
+                onDecide={(decision) =>
+                  handleApprovalDecision(
+                    tool.id,
+                    actionType,
+                    title,
+                    entityId,
+                    decision,
+                  )
+                }
+              />
+            </div>
+          );
+        })()}
+
+      {/* 3. Docked Bottom Prompt Composer (Sits on top with -mt-6 so the approval card is tucked behind) */}
+      <div className="w-full max-w-3xl mx-auto pb-2 pt-1 px-3 sm:px-0 shrink-0 relative z-20 -mt-6">
         <PromptComposer
           models={models.length > 0 ? models : undefined}
           isGenerating={isStreaming}
@@ -706,7 +875,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
             handleSendMessage(text, modelId, thinking)
           }
           onStop={handleStopGenerating}
-          className="max-w-none"
+          className="max-w-none shadow-[0_16px_48px_rgba(14,58,117,0.16)]"
         />
       </div>
     </div>
