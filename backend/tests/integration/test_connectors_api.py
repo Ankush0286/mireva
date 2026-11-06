@@ -2,13 +2,14 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 
 from app.modules.connectors.schemas import MetricOpportunityItem
 from app.modules.connectors.service import ConnectorService
 
 
-def test_connector_api_lifecycle(client: TestClient):
+@pytest.mark.anyio
+async def test_connector_api_lifecycle(client: AsyncClient):
     payload = {
         "name": "Integration Search Console",
         "connector_type": "google_search_console",
@@ -20,7 +21,7 @@ def test_connector_api_lifecycle(client: TestClient):
     }
 
     # 1. POST Create
-    create_res = client.post("/api/v1/connectors/", json=payload)
+    create_res = await client.post("/api/v1/connectors/", json=payload)
     assert create_res.status_code == 201
     data = create_res.json()
     assert data["name"] == "Integration Search Console"
@@ -36,12 +37,12 @@ def test_connector_api_lifecycle(client: TestClient):
     assert "encrypted_client_secret" not in data
 
     # 2. GET by ID
-    get_res = client.get(f"/api/v1/connectors/{connector_id}")
+    get_res = await client.get(f"/api/v1/connectors/{connector_id}")
     assert get_res.status_code == 200
     assert get_res.json()["id"] == connector_id
 
     # 3. PATCH Update
-    patch_res = client.patch(
+    patch_res = await client.patch(
         f"/api/v1/connectors/{connector_id}",
         json={
             "name": "Renamed Search Console",
@@ -53,16 +54,17 @@ def test_connector_api_lifecycle(client: TestClient):
     assert patch_res.json()["sync_frequency_minutes"] == 720
 
     # 4. DELETE
-    del_res = client.delete(f"/api/v1/connectors/{connector_id}")
+    del_res = await client.delete(f"/api/v1/connectors/{connector_id}")
     assert del_res.status_code == 204
 
     # 5. Subsequent GET returns 404
-    assert client.get(f"/api/v1/connectors/{connector_id}").status_code == 404
+    assert (await client.get(f"/api/v1/connectors/{connector_id}")).status_code == 404
 
 
-def test_list_and_filter_connectors_api(client: TestClient):
+@pytest.mark.anyio
+async def test_list_and_filter_connectors_api(client: AsyncClient):
     # Seed connector 1
-    res1 = client.post(
+    res1 = await client.post(
         "/api/v1/connectors/",
         json={
             "name": "GSC Source",
@@ -74,7 +76,7 @@ def test_list_and_filter_connectors_api(client: TestClient):
     assert res1.status_code == 201
 
     # Seed connector 2
-    res2 = client.post(
+    res2 = await client.post(
         "/api/v1/connectors/",
         json={
             "name": "Ahrefs Source",
@@ -87,27 +89,28 @@ def test_list_and_filter_connectors_api(client: TestClient):
     c2_id = res2.json()["id"]
 
     # Pause second connector
-    client.patch(f"/api/v1/connectors/{c2_id}", json={"is_active": False})
+    await client.patch(f"/api/v1/connectors/{c2_id}", json={"is_active": False})
 
     # List all
-    all_res = client.get("/api/v1/connectors/")
+    all_res = await client.get("/api/v1/connectors/")
     assert all_res.status_code == 200
     assert len(all_res.json()) >= 2
 
     # Filter active only
-    active_res = client.get("/api/v1/connectors/?active_only=true")
+    active_res = await client.get("/api/v1/connectors/?active_only=true")
     assert active_res.status_code == 200
     active_items = active_res.json()
     assert all(item["is_active"] is True for item in active_items)
 
     # Filter by connector_type
-    gsc_res = client.get("/api/v1/connectors/?connector_type=google_search_console")
+    gsc_res = await client.get("/api/v1/connectors/?connector_type=google_search_console")
     assert gsc_res.status_code == 200
     gsc_items = gsc_res.json()
     assert all(item["connector_type"] == "google_search_console" for item in gsc_items)
 
 
-def test_create_duplicate_connector_returns_409(client: TestClient):
+@pytest.mark.anyio
+async def test_create_duplicate_connector_returns_409(client: AsyncClient):
     payload = {
         "name": "Unique GSC",
         "connector_type": "google_search_console",
@@ -115,16 +118,17 @@ def test_create_duplicate_connector_returns_409(client: TestClient):
         "refresh_token": "rt_123",
     }
 
-    res1 = client.post("/api/v1/connectors/", json=payload)
+    res1 = await client.post("/api/v1/connectors/", json=payload)
     assert res1.status_code == 201
 
     # Second attempt with same provider and target
-    res2 = client.post("/api/v1/connectors/", json=payload)
+    res2 = await client.post("/api/v1/connectors/", json=payload)
     assert res2.status_code == 409
     assert res2.json()["error"] == "CONFLICT"
 
 
-def test_create_connector_without_credentials_returns_422(client: TestClient):
+@pytest.mark.anyio
+async def test_create_connector_without_credentials_returns_422(client: AsyncClient):
     payload = {
         "name": "No Auth Connector",
         "connector_type": "ahrefs",
@@ -132,21 +136,23 @@ def test_create_connector_without_credentials_returns_422(client: TestClient):
         # Missing api_key and refresh_token
     }
 
-    res = client.post("/api/v1/connectors/", json=payload)
+    res = await client.post("/api/v1/connectors/", json=payload)
     assert res.status_code == 422
     assert res.json()["error"] == "VALIDATION_ERROR"
 
 
-def test_get_nonexistent_connector_returns_404(client: TestClient):
+@pytest.mark.anyio
+async def test_get_nonexistent_connector_returns_404(client: AsyncClient):
     fake_uuid = str(uuid4())
-    res = client.get(f"/api/v1/connectors/{fake_uuid}")
+    res = await client.get(f"/api/v1/connectors/{fake_uuid}")
     assert res.status_code == 404
     assert res.json()["error"] == "NOT_FOUND"
 
 
-def test_test_connector_endpoint(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.anyio
+async def test_test_connector_endpoint(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):
     # 1. Register connector
-    create_res = client.post(
+    create_res = await client.post(
         "/api/v1/connectors/",
         json={
             "name": "Health Test GSC",
@@ -163,16 +169,17 @@ def test_test_connector_endpoint(client: TestClient, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(ConnectorService, "test_connection", mock_test)
 
     # 3. Post to test endpoint
-    test_res = client.post(f"/api/v1/connectors/{connector_id}/test")
+    test_res = await client.post(f"/api/v1/connectors/{connector_id}/test")
     assert test_res.status_code == 200
     data = test_res.json()
     assert data["status"] == "connected"
     assert data["verified"] is True
 
 
-def test_get_opportunities_endpoint(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.anyio
+async def test_get_opportunities_endpoint(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):
     # 1. Register connector
-    create_res = client.post(
+    create_res = await client.post(
         "/api/v1/connectors/",
         json={
             "name": "Opportunities Source",
@@ -201,7 +208,7 @@ def test_get_opportunities_endpoint(client: TestClient, monkeypatch: pytest.Monk
     monkeypatch.setattr(ConnectorService, "fetch_opportunities", mock_fetch)
 
     # 2. Query opportunities endpoint
-    opps_res = client.get(
+    opps_res = await client.get(
         f"/api/v1/connectors/{connector_id}/opportunities?min_impressions=1000&limit=5"
     )
     assert opps_res.status_code == 200

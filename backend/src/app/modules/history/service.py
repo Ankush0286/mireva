@@ -1,7 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import ActivitySeverity, ActivityType
 from app.modules.history.commands import LogActivityCommand
@@ -14,30 +15,26 @@ def _ensure_uuid(val: UUID | str) -> UUID:
 
 
 class HistoryService:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
     # =========================================================================
     # Query Methods
     # =========================================================================
 
-    def get_by_id(self, log_id: UUID | str) -> ActivityLog | None:
-        """Fetch a single audit log entry by UUID, returning None if not found."""
+    async def get_by_id(self, log_id: UUID | str) -> ActivityLog | None:
         target_id = _ensure_uuid(log_id)
-        return (
-            self.db.query(ActivityLog)
-            .filter(ActivityLog.id == target_id)
-            .first()
-        )
+        stmt = select(ActivityLog).where(ActivityLog.id == target_id)
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_by_id_or_raise(self, log_id: UUID | str) -> ActivityLog:
-        """Fetch a single audit log entry or raise ActivityLogNotFoundError."""
-        log = self.get_by_id(log_id)
+    async def get_by_id_or_raise(self, log_id: UUID | str) -> ActivityLog:
+        log = await self.get_by_id(log_id)
         if not log:
             raise ActivityLogNotFoundError(log_id)
         return log
 
-    def list_activities(
+    async def list_activities(
         self,
         activity_type: ActivityType | None = None,
         severity: ActivitySeverity | None = None,
@@ -48,50 +45,46 @@ class HistoryService:
         limit: int = 50,
         offset: int = 0,
     ) -> list[ActivityLog]:
-        """
-        Query the audit trail with multi-parameter filtering and pagination.
-        Ordered by newest events first.
-        """
-        query = self.db.query(ActivityLog).order_by(ActivityLog.created_at.desc())
+        stmt = select(ActivityLog).order_by(ActivityLog.created_at.desc())
 
         if activity_type is not None:
-            query = query.filter(ActivityLog.activity_type == activity_type)
+            stmt = stmt.where(ActivityLog.activity_type == activity_type)
         if severity is not None:
-            query = query.filter(ActivityLog.severity == severity)
+            stmt = stmt.where(ActivityLog.severity == severity)
         if entity_type is not None:
-            query = query.filter(ActivityLog.entity_type == entity_type)
+            stmt = stmt.where(ActivityLog.entity_type == entity_type)
         if entity_id is not None:
-            query = query.filter(ActivityLog.entity_id == entity_id)
+            stmt = stmt.where(ActivityLog.entity_id == entity_id)
 
         if since is not None:
             since_utc = since.replace(tzinfo=UTC) if since.tzinfo is None else since
-            query = query.filter(ActivityLog.created_at >= since_utc)
+            stmt = stmt.where(ActivityLog.created_at >= since_utc)
 
         if until is not None:
             until_utc = until.replace(tzinfo=UTC) if until.tzinfo is None else until
-            query = query.filter(ActivityLog.created_at <= until_utc)
+            stmt = stmt.where(ActivityLog.created_at <= until_utc)
 
-        return query.offset(offset).limit(limit).all()
+        result = await self.db.execute(stmt.offset(offset).limit(limit))
+        return list(result.scalars().all())
 
-    def count_activities(
+    async def count_activities(
         self,
         activity_type: ActivityType | None = None,
         severity: ActivitySeverity | None = None,
     ) -> int:
-        """Count total matching activities for dashboard metrics."""
-        query = self.db.query(ActivityLog)
+        stmt = select(func.count()).select_from(ActivityLog)
         if activity_type is not None:
-            query = query.filter(ActivityLog.activity_type == activity_type)
+            stmt = stmt.where(ActivityLog.activity_type == activity_type)
         if severity is not None:
-            query = query.filter(ActivityLog.severity == severity)
-        return query.count()
+            stmt = stmt.where(ActivityLog.severity == severity)
+        result = await self.db.execute(stmt)
+        return result.scalar() or 0
 
     # =========================================================================
     # Mutation Methods
     # =========================================================================
 
-    def log_activity(self, cmd: LogActivityCommand) -> ActivityLog:
-        """Appends a new immutable event to the audit trail."""
+    async def log_activity(self, cmd: LogActivityCommand) -> ActivityLog:
         log = ActivityLog(
             activity_type=cmd.activity_type,
             title=cmd.title,
@@ -103,20 +96,20 @@ class HistoryService:
             extra_metadata=cmd.extra_metadata,
         )
         self.db.add(log)
-        self.db.commit()
-        self.db.refresh(log)
+        await self.db.commit()
+        await self.db.refresh(log)
         return log
 
-    def purge_logs_older_than(self, days: int = 90) -> int:
-        """
-        Data retention policy maintenance helper.
-        Purges historical logs older than the specified threshold.
-        """
+    async def purge_logs_older_than(self, days: int = 90) -> int:
         cutoff = datetime.now(UTC) - timedelta(days=days)
-        deleted_count = (
-            self.db.query(ActivityLog)
-            .filter(ActivityLog.created_at < cutoff)
-            .delete(synchronize_session="fetch")
+        # Add synchronize_session=False so SQLAlchemy doesn't try to evaluate
+        # the datetime comparison in Python memory for SQLite.
+        stmt = (
+            delete(ActivityLog)
+            .where(ActivityLog.created_at < cutoff)
+            .execution_options(synchronize_session=False)
         )
-        self.db.commit()
-        return deleted_count
+
+        result = await self.db.execute(stmt)
+        await self.db.commit()
+        return getattr(result, "rowcount", 0)

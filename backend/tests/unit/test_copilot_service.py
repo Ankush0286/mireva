@@ -1,7 +1,7 @@
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import ChatRole, ToolExecutionStatus
 from app.modules.copilot.commands import (
@@ -21,7 +21,8 @@ from app.modules.copilot.service import CopilotService
 # =============================================================================
 
 
-def test_session_crud(db_session: Session):
+@pytest.mark.anyio
+async def test_session_crud(db_session: AsyncSession):
     service = CopilotService(db_session)
 
     # 1. Create session
@@ -30,7 +31,7 @@ def test_session_crud(db_session: Session):
         system_prompt_override="You are an expert SaaS copywriter.",
         extra_metadata={"channel": "twitter"},
     )
-    session = service.create_session(cmd)
+    session = await service.create_session(cmd)
 
     assert session.id is not None
     assert session.title == "Q4 Launch Brainstorm"
@@ -38,11 +39,11 @@ def test_session_crud(db_session: Session):
     assert session.is_archived is False
 
     # 2. Get session by ID
-    queried = service.get_session_by_id_or_raise(session.id)
+    queried = await service.get_session_by_id_or_raise(session.id)
     assert queried.id == session.id
 
     # 3. Update session
-    updated = service.update_session(
+    updated = await service.update_session(
         UpdateChatSessionCommand(
             session_id=session.id,
             title="Refined Brainstorm",
@@ -53,36 +54,38 @@ def test_session_crud(db_session: Session):
     assert updated.is_archived is True
 
     # 4. List sessions
-    active_sessions = service.list_sessions(include_archived=False)
+    active_sessions = await service.list_sessions(include_archived=False)
     assert len(active_sessions) == 0
 
-    all_sessions = service.list_sessions(include_archived=True)
+    all_sessions = await service.list_sessions(include_archived=True)
     assert len(all_sessions) == 1
 
     # 5. Delete session
-    service.delete_session(session.id)
-    assert service.get_session_by_id(session.id) is None
+    await service.delete_session(session.id)
+    assert await service.get_session_by_id(session.id) is None
 
 
-def test_get_nonexistent_session_raises(db_session: Session):
+@pytest.mark.anyio
+async def test_get_nonexistent_session_raises(db_session: AsyncSession):
     service = CopilotService(db_session)
     with pytest.raises(ChatSessionNotFoundError):
-        service.get_session_by_id_or_raise(uuid4())
+        await service.get_session_by_id_or_raise(uuid4())
 
 
-def test_session_cascade_deletion(db_session: Session):
+@pytest.mark.anyio
+async def test_session_cascade_deletion(db_session: AsyncSession):
     """Verifies deleting a session cascades to its messages and tool logs."""
     service = CopilotService(db_session)
 
-    session = service.create_session(CreateChatSessionCommand(title="To Delete"))
-    msg = service.add_message(
+    session = await service.create_session(CreateChatSessionCommand(title="To Delete"))
+    msg = await service.add_message(
         AddChatMessageCommand(
             session_id=session.id,
             role=ChatRole.USER,
             content="Hello AI",
         )
     )
-    service.log_tool_execution(
+    await service.log_tool_execution(
         LogToolExecutionCommand(
             session_id=session.id,
             message_id=msg.id,
@@ -91,13 +94,15 @@ def test_session_cascade_deletion(db_session: Session):
         )
     )
 
-    service.delete_session(session.id)
+    await service.delete_session(session.id)
 
-    assert service.get_session_by_id(session.id) is None
+    assert await service.get_session_by_id(session.id) is None
+
     with pytest.raises(ChatSessionNotFoundError):
-        service.list_messages(session.id)
+        await service.list_messages(session.id)
+
     with pytest.raises(ChatSessionNotFoundError):
-        service.list_tool_executions(session.id)
+        await service.list_tool_executions(session.id)
 
 
 # =============================================================================
@@ -105,19 +110,20 @@ def test_session_cascade_deletion(db_session: Session):
 # =============================================================================
 
 
-def test_add_and_list_messages_with_pagination(db_session: Session):
+@pytest.mark.anyio
+async def test_add_and_list_messages_with_pagination(db_session: AsyncSession):
     service = CopilotService(db_session)
-    session = service.create_session(CreateChatSessionCommand(title="Chat Thread"))
+    session = await service.create_session(CreateChatSessionCommand(title="Chat Thread"))
 
     # Add messages
-    msg1 = service.add_message(
+    msg1 = await service.add_message(
         AddChatMessageCommand(
             session_id=session.id,
             role=ChatRole.USER,
             content="Can you draft a tweet?",
         )
     )
-    msg2 = service.add_message(
+    msg2 = await service.add_message(
         AddChatMessageCommand(
             session_id=session.id,
             role=ChatRole.ASSISTANT,
@@ -133,21 +139,22 @@ def test_add_and_list_messages_with_pagination(db_session: Session):
     assert msg2.token_count == 18
 
     # List messages
-    messages = service.list_messages(session.id)
+    messages = await service.list_messages(session.id)
     assert len(messages) == 2
     assert messages[0].content == "Can you draft a tweet?"
     assert messages[1].content == "Here is a draft tweet!"
 
     # Pagination: limit 1, offset 1
-    paged = service.list_messages(session.id, limit=1, offset=1)
+    paged = await service.list_messages(session.id, limit=1, offset=1)
     assert len(paged) == 1
     assert paged[0].id == msg2.id
 
 
-def test_add_message_nonexistent_session_raises(db_session: Session):
+@pytest.mark.anyio
+async def test_add_message_nonexistent_session_raises(db_session: AsyncSession):
     service = CopilotService(db_session)
     with pytest.raises(ChatSessionNotFoundError):
-        service.add_message(
+        await service.add_message(
             AddChatMessageCommand(
                 session_id=uuid4(),
                 role=ChatRole.USER,
@@ -156,25 +163,26 @@ def test_add_message_nonexistent_session_raises(db_session: Session):
         )
 
 
-def test_get_conversation_context_hydrates_system_prompt(db_session: Session):
+@pytest.mark.anyio
+async def test_get_conversation_context_hydrates_system_prompt(db_session: AsyncSession):
     """Verifies that conversation context prepends system_prompt_override and formats turns."""
     service = CopilotService(db_session)
 
-    session = service.create_session(
+    session = await service.create_session(
         CreateChatSessionCommand(
             title="Context Test",
             system_prompt_override="Always answer in bullet points.",
         )
     )
 
-    service.add_message(
+    await service.add_message(
         AddChatMessageCommand(
             session_id=session.id,
             role=ChatRole.USER,
             content="What is marketing automation?",
         )
     )
-    service.add_message(
+    await service.add_message(
         AddChatMessageCommand(
             session_id=session.id,
             role=ChatRole.ASSISTANT,
@@ -182,7 +190,7 @@ def test_get_conversation_context_hydrates_system_prompt(db_session: Session):
         )
     )
 
-    context = service.get_conversation_context(session.id, max_messages=10)
+    context = await service.get_conversation_context(session.id, max_messages=10)
 
     assert len(context) == 3
     # 1. System prompt is prepended
@@ -201,11 +209,12 @@ def test_get_conversation_context_hydrates_system_prompt(db_session: Session):
 # =============================================================================
 
 
-def test_log_and_list_tool_executions(db_session: Session):
+@pytest.mark.anyio
+async def test_log_and_list_tool_executions(db_session: AsyncSession):
     service = CopilotService(db_session)
-    session = service.create_session(CreateChatSessionCommand(title="Tool Thread"))
+    session = await service.create_session(CreateChatSessionCommand(title="Tool Thread"))
 
-    msg = service.add_message(
+    msg = await service.add_message(
         AddChatMessageCommand(
             session_id=session.id,
             role=ChatRole.ASSISTANT,
@@ -213,7 +222,7 @@ def test_log_and_list_tool_executions(db_session: Session):
         )
     )
 
-    tool_log = service.log_tool_execution(
+    tool_log = await service.log_tool_execution(
         LogToolExecutionCommand(
             session_id=session.id,
             message_id=msg.id,
@@ -228,22 +237,23 @@ def test_log_and_list_tool_executions(db_session: Session):
     assert tool_log.id is not None
     assert tool_log.tool_name == "get_accounts"
     assert tool_log.input_arguments["platform"] == "twitter"
-    assert isinstance(tool_log.output_result, dict)  # <-- Narrows type for Mypy
+    assert isinstance(tool_log.output_result, dict)
     assert tool_log.output_result["accounts_count"] == 2
     assert tool_log.execution_time_ms == 45
 
     # List tool traces
-    traces = service.list_tool_executions(session.id)
+    traces = await service.list_tool_executions(session.id)
     assert len(traces) == 1
     assert traces[0].id == tool_log.id
 
 
-def test_log_tool_execution_invalid_message_raises(db_session: Session):
+@pytest.mark.anyio
+async def test_log_tool_execution_invalid_message_raises(db_session: AsyncSession):
     service = CopilotService(db_session)
-    session = service.create_session(CreateChatSessionCommand(title="Tool Validation"))
+    session = await service.create_session(CreateChatSessionCommand(title="Tool Validation"))
 
     with pytest.raises(ChatMessageNotFoundError):
-        service.log_tool_execution(
+        await service.log_tool_execution(
             LogToolExecutionCommand(
                 session_id=session.id,
                 message_id=uuid4(),  # Invalid message reference

@@ -1,7 +1,7 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.dependencies import get_db_session
 from app.system.schemas import (
@@ -14,7 +14,7 @@ from app.system.service import SystemDiagnosticsService
 router = APIRouter()
 
 
-def get_system_service(db: Session = Depends(get_db_session)) -> SystemDiagnosticsService:
+def get_system_service(db: AsyncSession = Depends(get_db_session)) -> SystemDiagnosticsService:
     return SystemDiagnosticsService(db)
 
 
@@ -24,10 +24,10 @@ def get_system_service(db: Session = Depends(get_db_session)) -> SystemDiagnosti
     status_code=status.HTTP_200_OK,
     summary="Run full system health audit and recipe coverage check",
 )
-def get_system_diagnostics(
+async def get_system_diagnostics(
     service: SystemDiagnosticsService = Depends(get_system_service),
 ) -> SystemDiagnosticsResponse:
-    return service.get_diagnostics()
+    return await service.get_diagnostics()
 
 
 @router.post(
@@ -36,10 +36,10 @@ def get_system_diagnostics(
     status_code=status.HTTP_200_OK,
     summary="Idempotently seed all default platform action recipes",
 )
-def seed_default_recipes(
+async def seed_default_recipes(
     service: SystemDiagnosticsService = Depends(get_system_service),
 ) -> SeedRecipesResponse:
-    return service.seed_default_recipes()
+    return await service.seed_default_recipes()
 
 
 @router.post(
@@ -47,10 +47,10 @@ def seed_default_recipes(
     status_code=status.HTTP_200_OK,
     summary="Force immediate synchronization with Turso Cloud replica",
 )
-def sync_database_replica(
+async def sync_database_replica(
     service: SystemDiagnosticsService = Depends(get_system_service),
 ) -> dict[str, Any]:
-    return service.trigger_replica_sync()
+    return await service.trigger_replica_sync()
 
 
 @router.post(

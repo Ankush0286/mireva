@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import ActivitySeverity, ActivityType
 from app.db.dependencies import get_db_session
@@ -15,7 +15,7 @@ from app.modules.history.service import HistoryService
 router = APIRouter()
 
 
-def get_history_service(db: Session = Depends(get_db_session)) -> HistoryService:
+def get_history_service(db: AsyncSession = Depends(get_db_session)) -> HistoryService:
     """Dependency injection factory for HistoryService."""
     return HistoryService(db)
 
@@ -26,11 +26,11 @@ def get_history_service(db: Session = Depends(get_db_session)) -> HistoryService
     status_code=status.HTTP_201_CREATED,
     summary="Record an audit log entry",
 )
-def record_activity_log(
+async def record_activity_log(
     payload: ActivityLogCreateRequest,
     service: HistoryService = Depends(get_history_service),
 ) -> ActivityLogResponse:
-    log = service.log_activity(payload.to_command())
+    log = await service.log_activity(payload.to_command())
     return ActivityLogResponse.model_validate(log)
 
 
@@ -40,7 +40,7 @@ def record_activity_log(
     status_code=status.HTTP_200_OK,
     summary="Query unified activity audit trail",
 )
-def list_activity_logs(
+async def list_activity_logs(
     activity_type: ActivityType | None = Query(
         default=None, description="Filter by event type (e.g. post_published, lead_imported)"
     ),
@@ -63,7 +63,7 @@ def list_activity_logs(
     offset: int = Query(default=0, ge=0, description="Pagination offset"),
     service: HistoryService = Depends(get_history_service),
 ) -> list[ActivityLogResponse]:
-    logs = service.list_activities(
+    logs = await service.list_activities(
         activity_type=activity_type,
         severity=severity,
         entity_type=entity_type,
@@ -82,9 +82,9 @@ def list_activity_logs(
     status_code=status.HTTP_200_OK,
     summary="Get an audit log entry by ID",
 )
-def get_activity_log(
+async def get_activity_log(
     log_id: UUID,
     service: HistoryService = Depends(get_history_service),
 ) -> ActivityLogResponse:
-    log = service.get_by_id_or_raise(log_id)
+    log = await service.get_by_id_or_raise(log_id)
     return ActivityLogResponse.model_validate(log)

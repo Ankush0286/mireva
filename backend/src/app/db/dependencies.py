@@ -1,17 +1,15 @@
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from .session import session_factory
+from .session import async_session_factory
 
 
-def get_db_session() -> Generator[Session, None, None]:
-    """Dependency helper for FastAPI endpoints."""
-    session = session_factory()
-    try:
-        yield session
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI dependency yielding an isolated async session per request."""
+    async with async_session_factory() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise

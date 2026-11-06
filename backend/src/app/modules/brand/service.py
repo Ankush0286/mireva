@@ -1,6 +1,7 @@
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.brand.commands import (
     CreateBrandKitCommand,
@@ -15,35 +16,35 @@ def _ensure_uuid(val: UUID | str) -> UUID:
 
 
 class BrandService:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
-    def get_by_id(self, brand_kit_id: UUID | str) -> BrandKit | None:
+    async def get_by_id(self, brand_kit_id: UUID | str) -> BrandKit | None:
         target_id = _ensure_uuid(brand_kit_id)
-        return self.db.query(BrandKit).filter(BrandKit.id == target_id).first()
+        stmt = select(BrandKit).where(BrandKit.id == target_id)
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_by_id_or_raise(self, brand_kit_id: UUID | str) -> BrandKit:
-        kit = self.get_by_id(brand_kit_id)
+    async def get_by_id_or_raise(self, brand_kit_id: UUID | str) -> BrandKit:
+        kit = await self.get_by_id(brand_kit_id)
         if not kit:
             raise BrandKitNotFoundError(brand_kit_id)
         return kit
 
-    def get_primary_brand_kit(self) -> BrandKit | None:
-        """Retrieves the active primary Brand Kit."""
-        return (
-            self.db.query(BrandKit)
-            .filter(BrandKit.is_primary.is_(True))
+    async def get_primary_brand_kit(self) -> BrandKit | None:
+        stmt = (
+            select(BrandKit)
+            .where(BrandKit.is_primary.is_(True))
             .order_by(BrandKit.updated_at.desc())
-            .first()
         )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_or_create_default_primary(self) -> BrandKit:
-        """Returns the primary Brand Kit, creating an empty blank record if none exists."""
-        primary = self.get_primary_brand_kit()
+    async def get_or_create_default_primary(self) -> BrandKit:
+        primary = await self.get_primary_brand_kit()
         if primary:
             return primary
 
-        # Create completely blank record for the user to configure
         empty_kit = BrandKit(
             name="",
             tagline="",
@@ -62,18 +63,17 @@ class BrandService:
             key_links=[],
         )
         self.db.add(empty_kit)
-        self.db.commit()
-        self.db.refresh(empty_kit)
+        await self.db.commit()
+        await self.db.refresh(empty_kit)
         return empty_kit
 
-    def get_active_brand_context(self) -> str:
-        """Returns compiled token-efficient prompt string for Pydantic AI injection."""
-        kit = self.get_primary_brand_kit()
+    async def get_active_brand_context(self) -> str:
+        kit = await self.get_primary_brand_kit()
         return kit.to_prompt_context() if kit else ""
 
-    def create_brand_kit(self, cmd: CreateBrandKitCommand) -> BrandKit:
+    async def create_brand_kit(self, cmd: CreateBrandKitCommand) -> BrandKit:
         if cmd.is_primary:
-            self.db.query(BrandKit).update({BrandKit.is_primary: False})
+            await self.db.execute(update(BrandKit).values(is_primary=False))
 
         kit = BrandKit(
             name=cmd.name.strip(),
@@ -94,15 +94,17 @@ class BrandService:
             extra_metadata=cmd.extra_metadata,
         )
         self.db.add(kit)
-        self.db.commit()
-        self.db.refresh(kit)
+        await self.db.commit()
+        await self.db.refresh(kit)
         return kit
 
-    def update_brand_kit(self, cmd: UpdateBrandKitCommand) -> BrandKit:
-        kit = self.get_by_id_or_raise(cmd.brand_kit_id)
+    async def update_brand_kit(self, cmd: UpdateBrandKitCommand) -> BrandKit:
+        kit = await self.get_by_id_or_raise(cmd.brand_kit_id)
 
         if cmd.is_primary is True:
-            self.db.query(BrandKit).filter(BrandKit.id != kit.id).update({BrandKit.is_primary: False})
+            await self.db.execute(
+                update(BrandKit).where(BrandKit.id != kit.id).values(is_primary=False)
+            )
             kit.is_primary = True
 
         if cmd.name is not None:
@@ -136,6 +138,6 @@ class BrandService:
         if cmd.extra_metadata is not None:
             kit.extra_metadata = cmd.extra_metadata
 
-        self.db.commit()
-        self.db.refresh(kit)
+        await self.db.commit()
+        await self.db.refresh(kit)
         return kit

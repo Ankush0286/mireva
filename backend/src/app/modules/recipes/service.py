@@ -8,7 +8,8 @@ from uuid import UUID
 
 from fastapi import WebSocket
 from playwright.async_api import async_playwright
-from sqlalchemy.orm import Session
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import PlatformType
 from app.modules.accounts.models import ConnectedAccount
@@ -37,62 +38,58 @@ def _ensure_uuid(val: UUID | str) -> UUID:
 
 
 class RecipeService:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
     # ================= Query & CRUD Methods =================
 
-    def get_recipe_by_id(self, recipe_id: UUID | str) -> ActionRecipe | None:
+    async def get_recipe_by_id(self, recipe_id: UUID | str) -> ActionRecipe | None:
         target_id = _ensure_uuid(recipe_id)
-        return self.db.query(ActionRecipe).filter(ActionRecipe.id == target_id).first()
+        stmt = select(ActionRecipe).where(ActionRecipe.id == target_id)
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_recipe_by_id_or_raise(self, recipe_id: UUID | str) -> ActionRecipe:
-        recipe = self.get_recipe_by_id(recipe_id)
+    async def get_recipe_by_id_or_raise(self, recipe_id: UUID | str) -> ActionRecipe:
+        recipe = await self.get_recipe_by_id(recipe_id)
         if not recipe:
             raise RecipeNotFoundError(recipe_id)
         return recipe
 
-    def get_default_recipe(self, platform: PlatformType) -> ActionRecipe | None:
-        """Retrieves the primary active recipe for a platform."""
-        return (
-            self.db.query(ActionRecipe)
-            .filter(
-                ActionRecipe.platform == platform,
-                ActionRecipe.is_default.is_(True),
-                ActionRecipe.is_active.is_(True),
-            )
-            .first()
+    async def get_default_recipe(self, platform: PlatformType) -> ActionRecipe | None:
+        stmt = select(ActionRecipe).where(
+            ActionRecipe.platform == platform,
+            ActionRecipe.is_default.is_(True),
+            ActionRecipe.is_active.is_(True),
         )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def list_recipes(
+    async def list_recipes(
         self,
         platform: PlatformType | None = None,
         active_only: bool = False,
     ) -> list[ActionRecipe]:
-        """List recipes with optional platform filtering."""
-        query = self.db.query(ActionRecipe).order_by(ActionRecipe.created_at.desc())
+        stmt = select(ActionRecipe).order_by(ActionRecipe.created_at.desc())
         if platform is not None:
-            query = query.filter(ActionRecipe.platform == platform)
+            stmt = stmt.where(ActionRecipe.platform == platform)
         if active_only:
-            query = query.filter(ActionRecipe.is_active.is_(True))
-        return query.all()
+            stmt = stmt.where(ActionRecipe.is_active.is_(True))
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
-    def create_recipe(self, cmd: CreateRecipeCommand) -> ActionRecipe:
+    async def create_recipe(self, cmd: CreateRecipeCommand) -> ActionRecipe:
         clean_name = cmd.name.strip()
-        existing = (
-            self.db.query(ActionRecipe)
-            .filter(
-                ActionRecipe.platform == cmd.platform,
-                ActionRecipe.name == clean_name,
-            )
-            .first()
+        stmt = select(ActionRecipe).where(
+            ActionRecipe.platform == cmd.platform,
+            ActionRecipe.name == clean_name,
         )
-        if existing:
+        res = await self.db.execute(stmt)
+        if res.scalars().first():
             platform_str = cmd.platform.value if hasattr(cmd.platform, "value") else str(cmd.platform)
             raise RecipeAlreadyExistsError(platform=platform_str, name=clean_name)
 
         if cmd.is_default:
-            self._unset_default(cmd.platform)
+            await self._unset_default(cmd.platform)
 
         recipe = ActionRecipe(
             name=clean_name,
@@ -104,26 +101,23 @@ class RecipeService:
             extra_metadata=cmd.extra_metadata,
         )
         self.db.add(recipe)
-        self.db.commit()
-        self.db.refresh(recipe)
+        await self.db.commit()
+        await self.db.refresh(recipe)
         return recipe
 
-    def update_recipe(self, cmd: UpdateRecipeCommand) -> ActionRecipe:
-        recipe = self.get_recipe_by_id_or_raise(cmd.recipe_id)
+    async def update_recipe(self, cmd: UpdateRecipeCommand) -> ActionRecipe:
+        recipe = await self.get_recipe_by_id_or_raise(cmd.recipe_id)
 
         if cmd.name is not None:
             clean_name = cmd.name.strip()
             if clean_name != recipe.name:
-                existing = (
-                    self.db.query(ActionRecipe)
-                    .filter(
-                        ActionRecipe.platform == recipe.platform,
-                        ActionRecipe.name == clean_name,
-                        ActionRecipe.id != recipe.id,
-                    )
-                    .first()
+                stmt = select(ActionRecipe).where(
+                    ActionRecipe.platform == recipe.platform,
+                    ActionRecipe.name == clean_name,
+                    ActionRecipe.id != recipe.id,
                 )
-                if existing:
+                res = await self.db.execute(stmt)
+                if res.scalars().first():
                     platform_str = recipe.platform.value if hasattr(recipe.platform, "value") else str(recipe.platform)
                     raise RecipeAlreadyExistsError(platform=platform_str, name=clean_name)
                 recipe.name = clean_name
@@ -137,27 +131,30 @@ class RecipeService:
 
         if cmd.is_default is not None:
             if cmd.is_default and not recipe.is_default:
-                self._unset_default(recipe.platform)
+                await self._unset_default(recipe.platform)
             recipe.is_default = cmd.is_default
 
         if cmd.extra_metadata is not None:
             recipe.extra_metadata = cmd.extra_metadata
 
-        self.db.commit()
-        self.db.refresh(recipe)
+        await self.db.commit()
+        await self.db.refresh(recipe)
         return recipe
 
-    def delete_recipe(self, recipe_id: UUID | str) -> None:
-        recipe = self.get_recipe_by_id_or_raise(recipe_id)
-        self.db.delete(recipe)
-        self.db.commit()
+    async def delete_recipe(self, recipe_id: UUID | str) -> None:
+        recipe = await self.get_recipe_by_id_or_raise(recipe_id)
+        await self.db.delete(recipe)
+        await self.db.commit()
 
-    def _unset_default(self, platform: PlatformType) -> None:
-        """Removes default flag from any existing recipes on the platform."""
-        self.db.query(ActionRecipe).filter(
-            ActionRecipe.platform == platform,
-            ActionRecipe.is_default.is_(True),
-        ).update({ActionRecipe.is_default: False})
+    async def _unset_default(self, platform: PlatformType) -> None:
+        await self.db.execute(
+            update(ActionRecipe)
+            .where(
+                ActionRecipe.platform == platform,
+                ActionRecipe.is_default.is_(True),
+            )
+            .values(is_default=False)
+        )
 
     # ================= Live Browser Recorder Stream =================
 
@@ -166,12 +163,11 @@ class RecipeService:
         platform: str,
         websocket: WebSocket,
     ) -> None:
-        """
-        Orchestrates live browser CDP screencasting and step recording for custom workflows.
-        """
         try:
             p_enum = PlatformType(platform.lower())
-            account = self.db.query(ConnectedAccount).filter(ConnectedAccount.platform == p_enum).first()
+            stmt = select(ConnectedAccount).where(ConnectedAccount.platform == p_enum)
+            res = await self.db.execute(stmt)
+            account = res.scalars().first()
         except ValueError:
             account = None
 
@@ -192,7 +188,6 @@ class RecipeService:
             page = context.pages[0] if context.pages else await context.new_page()
             await page.set_viewport_size({"width": 1280, "height": 800})
 
-            # Expose step capture to all frames with 1.2s click debouncing
             last_click_desc: str | None = None
             last_click_time: float = 0.0
 
@@ -217,7 +212,6 @@ class RecipeService:
             await context.expose_function("__gc_record_step", on_step_captured)
             await context.add_init_script(RECORDER_INJECTION_JS)
 
-            # Native file chooser bridge
             active_file_chooser: Any = None
 
             def on_file_chooser(file_chooser):
@@ -227,7 +221,6 @@ class RecipeService:
 
             page.on("filechooser", on_file_chooser)
 
-            # Attach CDP Screencast Session
             cdp = await context.new_cdp_session(page)
 
             def on_screencast_frame(event: dict[str, Any]):

@@ -2,7 +2,9 @@ import re
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.common.enums import PlatformType, TriggerMatchStatus
 from app.modules.accounts.exceptions import AccountNotFoundError
@@ -30,49 +32,46 @@ def _ensure_uuid(val: UUID | str) -> UUID:
 
 
 class TriggerService:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
     # =========================================================================
     # Watched Handle Management
     # =========================================================================
 
-    def get_watched_handle_by_id(self, handle_id: UUID | str) -> WatchedHandle | None:
+    async def get_watched_handle_by_id(self, handle_id: UUID | str) -> WatchedHandle | None:
         target_id = _ensure_uuid(handle_id)
-        return (
-            self.db.query(WatchedHandle)
-            .filter(WatchedHandle.id == target_id)
-            .first()
-        )
+        stmt = select(WatchedHandle).where(WatchedHandle.id == target_id)
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_watched_handle_by_id_or_raise(self, handle_id: UUID | str) -> WatchedHandle:
-        handle = self.get_watched_handle_by_id(handle_id)
+    async def get_watched_handle_by_id_or_raise(self, handle_id: UUID | str) -> WatchedHandle:
+        handle = await self.get_watched_handle_by_id(handle_id)
         if not handle:
             raise WatchedHandleNotFoundError(handle_id)
         return handle
 
-    def get_watched_handle_by_platform_and_handle(
+    async def get_watched_handle_by_platform_and_handle(
         self, platform: PlatformType, handle: str
     ) -> WatchedHandle | None:
         clean_handle = handle.lstrip("@").strip()
-        return (
-            self.db.query(WatchedHandle)
-            .filter(
-                WatchedHandle.platform == platform,
-                WatchedHandle.handle == clean_handle,
-            )
-            .first()
+        stmt = select(WatchedHandle).where(
+            WatchedHandle.platform == platform,
+            WatchedHandle.handle == clean_handle,
         )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def list_watched_handles(self, active_only: bool = False) -> list[WatchedHandle]:
-        query = self.db.query(WatchedHandle).order_by(WatchedHandle.created_at.desc())
+    async def list_watched_handles(self, active_only: bool = False) -> list[WatchedHandle]:
+        stmt = select(WatchedHandle).order_by(WatchedHandle.created_at.desc())
         if active_only:
-            query = query.filter(WatchedHandle.is_active.is_(True))
-        return query.all()
+            stmt = stmt.where(WatchedHandle.is_active.is_(True))
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
-    def add_watched_handle(self, cmd: AddWatchedHandleCommand) -> WatchedHandle:
+    async def add_watched_handle(self, cmd: AddWatchedHandleCommand) -> WatchedHandle:
         clean_handle = cmd.handle.lstrip("@").strip()
-        existing = self.get_watched_handle_by_platform_and_handle(cmd.platform, clean_handle)
+        existing = await self.get_watched_handle_by_platform_and_handle(cmd.platform, clean_handle)
         if existing:
             platform_str = cmd.platform.value if hasattr(cmd.platform, "value") else str(cmd.platform)
             raise WatchedHandleAlreadyExistsError(platform=platform_str, handle=clean_handle)
@@ -85,12 +84,12 @@ class TriggerService:
             extra_metadata=cmd.extra_metadata,
         )
         self.db.add(watched)
-        self.db.commit()
-        self.db.refresh(watched)
+        await self.db.commit()
+        await self.db.refresh(watched)
         return watched
 
-    def update_watched_handle(self, cmd: UpdateWatchedHandleCommand) -> WatchedHandle:
-        watched = self.get_watched_handle_by_id_or_raise(cmd.handle_id)
+    async def update_watched_handle(self, cmd: UpdateWatchedHandleCommand) -> WatchedHandle:
+        watched = await self.get_watched_handle_by_id_or_raise(cmd.handle_id)
 
         if cmd.display_name is not None:
             watched.display_name = cmd.display_name
@@ -101,58 +100,62 @@ class TriggerService:
         if cmd.extra_metadata is not None:
             watched.extra_metadata = cmd.extra_metadata
 
-        self.db.commit()
-        self.db.refresh(watched)
+        await self.db.commit()
+        await self.db.refresh(watched)
         return watched
 
-    def delete_watched_handle(self, handle_id: UUID | str) -> None:
-        watched = self.get_watched_handle_by_id_or_raise(handle_id)
-        # Delete dependent matches first to avoid foreign key issues
-        self.db.query(TriggerMatch).filter(TriggerMatch.watched_handle_id == watched.id).delete(
-            synchronize_session="fetch"
+    async def delete_watched_handle(self, handle_id: UUID | str) -> None:
+        watched = await self.get_watched_handle_by_id_or_raise(handle_id)
+        await self.db.execute(
+            delete(TriggerMatch).where(TriggerMatch.watched_handle_id == watched.id)
         )
-        self.db.delete(watched)
-        self.db.commit()
+        await self.db.delete(watched)
+        await self.db.commit()
 
     # =========================================================================
     # Trigger Rule Management
     # =========================================================================
 
-    def get_rule_by_id(self, rule_id: UUID | str) -> TriggerRule | None:
+    async def get_rule_by_id(self, rule_id: UUID | str) -> TriggerRule | None:
         target_id = _ensure_uuid(rule_id)
-        return (
-            self.db.query(TriggerRule)
-            .filter(TriggerRule.id == target_id)
-            .first()
+        stmt = (
+            select(TriggerRule)
+            .options(selectinload(TriggerRule.account))
+            .where(TriggerRule.id == target_id)
         )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_rule_by_id_or_raise(self, rule_id: UUID | str) -> TriggerRule:
-        rule = self.get_rule_by_id(rule_id)
+    async def get_rule_by_id_or_raise(self, rule_id: UUID | str) -> TriggerRule:
+        rule = await self.get_rule_by_id(rule_id)
         if not rule:
             raise TriggerRuleNotFoundError(rule_id)
         return rule
 
-    def list_rules(
+    async def list_rules(
         self, platform: PlatformType | None = None, active_only: bool = False
     ) -> list[TriggerRule]:
-        query = self.db.query(TriggerRule).order_by(TriggerRule.created_at.desc())
-        if platform is not None:
-            query = query.filter(TriggerRule.platform == platform)
-        if active_only:
-            query = query.filter(TriggerRule.is_active.is_(True))
-        return query.all()
-
-    def create_rule(self, cmd: CreateTriggerRuleCommand) -> TriggerRule:
-        account = (
-            self.db.query(ConnectedAccount)
-            .filter(ConnectedAccount.id == cmd.account_id)
-            .first()
+        stmt = (
+            select(TriggerRule)
+            .options(selectinload(TriggerRule.account))
+            .order_by(TriggerRule.created_at.desc())
         )
+        if platform is not None:
+            stmt = stmt.where(TriggerRule.platform == platform)
+        if active_only:
+            stmt = stmt.where(TriggerRule.is_active.is_(True))
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def create_rule(self, cmd: CreateTriggerRuleCommand) -> TriggerRule:
+        acc_stmt = select(ConnectedAccount).where(ConnectedAccount.id == cmd.account_id)
+        acc_result = await self.db.execute(acc_stmt)
+        account = acc_result.scalars().first()
         if not account:
             raise AccountNotFoundError(cmd.account_id)
 
         if cmd.watched_handle_id:
-            self.get_watched_handle_by_id_or_raise(cmd.watched_handle_id)
+            await self.get_watched_handle_by_id_or_raise(cmd.watched_handle_id)
 
         clean_any = [k.lower().strip() for k in cmd.keywords_any if k.strip()]
         clean_all = [k.lower().strip() for k in cmd.keywords_all if k.strip()]
@@ -177,25 +180,23 @@ class TriggerService:
             extra_metadata=cmd.extra_metadata,
         )
         self.db.add(rule)
-        self.db.commit()
-        self.db.refresh(rule)
+        await self.db.commit()
+        await self.db.refresh(rule)
         return rule
 
-    def update_rule(self, cmd: UpdateTriggerRuleCommand) -> TriggerRule:
-        rule = self.get_rule_by_id_or_raise(cmd.rule_id)
+    async def update_rule(self, cmd: UpdateTriggerRuleCommand) -> TriggerRule:
+        rule = await self.get_rule_by_id_or_raise(cmd.rule_id)
 
         if cmd.account_id is not None:
-            account = (
-                self.db.query(ConnectedAccount)
-                .filter(ConnectedAccount.id == cmd.account_id)
-                .first()
-            )
+            acc_stmt = select(ConnectedAccount).where(ConnectedAccount.id == cmd.account_id)
+            acc_res = await self.db.execute(acc_stmt)
+            account = acc_res.scalars().first()
             if not account:
                 raise AccountNotFoundError(cmd.account_id)
             rule.account_id = cmd.account_id
 
         if cmd.watched_handle_id is not None:
-            self.get_watched_handle_by_id_or_raise(cmd.watched_handle_id)
+            await self.get_watched_handle_by_id_or_raise(cmd.watched_handle_id)
             rule.watched_handle_id = cmd.watched_handle_id
 
         if cmd.name is not None:
@@ -219,18 +220,15 @@ class TriggerService:
         if cmd.extra_metadata is not None:
             rule.extra_metadata = cmd.extra_metadata
 
-        self.db.commit()
-        self.db.refresh(rule)
+        await self.db.commit()
+        await self.db.refresh(rule)
         return rule
 
-    def delete_rule(self, rule_id: UUID | str) -> None:
-        rule = self.get_rule_by_id_or_raise(rule_id)
-        # Delete dependent matches first to avoid foreign key issues
-        self.db.query(TriggerMatch).filter(TriggerMatch.rule_id == rule.id).delete(
-            synchronize_session="fetch"
-        )
-        self.db.delete(rule)
-        self.db.commit()
+    async def delete_rule(self, rule_id: UUID | str) -> None:
+        rule = await self.get_rule_by_id_or_raise(rule_id)
+        await self.db.execute(delete(TriggerMatch).where(TriggerMatch.rule_id == rule.id))
+        await self.db.delete(rule)
+        await self.db.commit()
 
     # =========================================================================
     # Matching Engine & Post Evaluation
@@ -238,21 +236,14 @@ class TriggerService:
 
     @staticmethod
     def evaluate_text_match(rule: TriggerRule, text: str) -> tuple[bool, list[str]]:
-        r"""
-        Hardened keyword evaluation engine:
-        Uses lookaround boundaries `(?<!\w)...(?!\w)` instead of `\b...\b`
-        so that `#hashtags` and `@mentions` match accurately.
-        """
         normalized_text = text.lower()
         matched: list[str] = []
 
-        # 1. Negative Exclusion Check
         for exclude_kw in rule.keywords_exclude:
             pattern = rf"(?<!\w){re.escape(exclude_kw)}(?!\w)"
             if re.search(pattern, normalized_text):
                 return False, []
 
-        # 2. Keywords All Check (all must match)
         if rule.keywords_all:
             for all_kw in rule.keywords_all:
                 pattern = rf"(?<!\w){re.escape(all_kw)}(?!\w)"
@@ -260,7 +251,6 @@ class TriggerService:
                     return False, []
                 matched.append(all_kw)
 
-        # 3. Keywords Any Check (at least one must match)
         if rule.keywords_any:
             any_found = False
             for any_kw in rule.keywords_any:
@@ -273,60 +263,47 @@ class TriggerService:
 
         return True, list(set(matched))
 
-    def evaluate_incoming_post(self, cmd: EvaluateIncomingPostCommand) -> list[TriggerMatch]:
-        """
-        Evaluates a scraped post against all active rules for the given platform.
-        Enforces post deduplication and author cooldown windows.
-        """
-        rules_query = self.db.query(TriggerRule).filter(
+    async def evaluate_incoming_post(self, cmd: EvaluateIncomingPostCommand) -> list[TriggerMatch]:
+        stmt = select(TriggerRule).where(
             TriggerRule.platform == cmd.platform,
             TriggerRule.is_active.is_(True),
         )
         if cmd.watched_handle_id:
-            rules_query = rules_query.filter(
+            stmt = stmt.where(
                 (TriggerRule.watched_handle_id == cmd.watched_handle_id)
                 | (TriggerRule.watched_handle_id.is_(None))
             )
         else:
-            rules_query = rules_query.filter(TriggerRule.watched_handle_id.is_(None))
+            stmt = stmt.where(TriggerRule.watched_handle_id.is_(None))
 
-        active_rules = rules_query.all()
+        rules_result = await self.db.execute(stmt)
+        active_rules = rules_result.scalars().all()
         created_matches: list[TriggerMatch] = []
         now = datetime.now(UTC)
 
         for rule in active_rules:
-            # 1. Post Deduplication Check: Prevent processing identical tweet multiple times
-            already_processed = (
-                self.db.query(TriggerMatch)
-                .filter(
-                    TriggerMatch.rule_id == rule.id,
-                    TriggerMatch.platform_post_id == cmd.platform_post_id,
-                )
-                .first()
+            dup_stmt = select(TriggerMatch).where(
+                TriggerMatch.rule_id == rule.id,
+                TriggerMatch.platform_post_id == cmd.platform_post_id,
             )
-            if already_processed:
+            dup_res = await self.db.execute(dup_stmt)
+            if dup_res.scalars().first():
                 continue
 
-            # 2. Keyword Evaluation
             is_match, matched_kws = self.evaluate_text_match(rule, cmd.post_content)
             if not is_match:
                 continue
 
-            # 3. Anti-Spam Author Cooldown Check
             cooldown_cutoff = now - timedelta(minutes=rule.cooldown_minutes)
-            recent_match = (
-                self.db.query(TriggerMatch)
-                .filter(
-                    TriggerMatch.rule_id == rule.id,
-                    TriggerMatch.author_handle == cmd.author_handle,
-                    TriggerMatch.created_at >= cooldown_cutoff,
-                )
-                .first()
+            cooldown_stmt = select(TriggerMatch).where(
+                TriggerMatch.rule_id == rule.id,
+                TriggerMatch.author_handle == cmd.author_handle,
+                TriggerMatch.created_at >= cooldown_cutoff,
             )
-            if recent_match:
-                continue  # Skip author within cooldown window
+            cd_res = await self.db.execute(cooldown_stmt)
+            if cd_res.scalars().first():
+                continue
 
-            # 4. Generate response copy from template
             response_copy: str | None = None
             if rule.response_template:
                 response_copy = rule.response_template.replace("{author}", cmd.author_handle)
@@ -346,9 +323,9 @@ class TriggerService:
             created_matches.append(match)
 
         if created_matches:
-            self.db.commit()
+            await self.db.commit()
             for m in created_matches:
-                self.db.refresh(m)
+                await self.db.refresh(m)
 
         return created_matches
 
@@ -356,41 +333,41 @@ class TriggerService:
     # Match Review & Actions
     # =========================================================================
 
-    def get_match_by_id(self, match_id: UUID | str) -> TriggerMatch | None:
+    async def get_match_by_id(self, match_id: UUID | str) -> TriggerMatch | None:
         target_id = _ensure_uuid(match_id)
-        return (
-            self.db.query(TriggerMatch)
-            .filter(TriggerMatch.id == target_id)
-            .first()
-        )
+        stmt = select(TriggerMatch).where(TriggerMatch.id == target_id)
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_match_by_id_or_raise(self, match_id: UUID | str) -> TriggerMatch:
-        match = self.get_match_by_id(match_id)
+    async def get_match_by_id_or_raise(self, match_id: UUID | str) -> TriggerMatch:
+        match = await self.get_match_by_id(match_id)
         if not match:
             raise TriggerMatchNotFoundError(match_id)
         return match
 
-    def list_matches(
+    async def list_matches(
         self,
         rule_id: UUID | None = None,
         status: TriggerMatchStatus | None = None,
         limit: int = 50,
     ) -> list[TriggerMatch]:
-        query = self.db.query(TriggerMatch).order_by(TriggerMatch.created_at.desc())
+        stmt = select(TriggerMatch).order_by(TriggerMatch.created_at.desc())
         if rule_id is not None:
-            query = query.filter(TriggerMatch.rule_id == rule_id)
+            stmt = stmt.where(TriggerMatch.rule_id == rule_id)
         if status is not None:
-            query = query.filter(TriggerMatch.status == status)
-        return query.limit(limit).all()
+            stmt = stmt.where(TriggerMatch.status == status)
 
-    def review_match(self, cmd: ReviewMatchCommand) -> TriggerMatch:
-        match = self.get_match_by_id_or_raise(cmd.match_id)
+        result = await self.db.execute(stmt.limit(limit))
+        return list(result.scalars().all())
+
+    async def review_match(self, cmd: ReviewMatchCommand) -> TriggerMatch:
+        match = await self.get_match_by_id_or_raise(cmd.match_id)
 
         if cmd.status == TriggerMatchStatus.APPROVED:
             match.mark_as_approved(response_text=cmd.edited_response)
         elif cmd.status == TriggerMatchStatus.IGNORED:
             match.mark_as_ignored()
 
-        self.db.commit()
-        self.db.refresh(match)
+        await self.db.commit()
+        await self.db.refresh(match)
         return match

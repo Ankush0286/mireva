@@ -1,7 +1,8 @@
 import logging
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import ConnectorType
 from app.core.security import decrypt_token, encrypt_token
@@ -26,51 +27,52 @@ def _ensure_uuid(val: UUID | str) -> UUID:
 
 
 class ConnectorService:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
     # ================= Query Methods =================
 
-    def get_by_id(self, connector_id: UUID | str) -> DataConnector | None:
+    async def get_by_id(self, connector_id: UUID | str) -> DataConnector | None:
         target_id = _ensure_uuid(connector_id)
-        return self.db.query(DataConnector).filter(DataConnector.id == target_id).first()
+        stmt = select(DataConnector).where(DataConnector.id == target_id)
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_by_id_or_raise(self, connector_id: UUID | str) -> DataConnector:
-        connector = self.get_by_id(connector_id)
+    async def get_by_id_or_raise(self, connector_id: UUID | str) -> DataConnector:
+        connector = await self.get_by_id(connector_id)
         if not connector:
             raise ConnectorNotFoundError(connector_id)
         return connector
 
-    def get_by_type_and_target(
+    async def get_by_type_and_target(
         self, connector_type: ConnectorType, target_identifier: str
     ) -> DataConnector | None:
         clean_target = target_identifier.strip()
-        return (
-            self.db.query(DataConnector)
-            .filter(
-                DataConnector.connector_type == connector_type,
-                DataConnector.target_identifier == clean_target,
-            )
-            .first()
+        stmt = select(DataConnector).where(
+            DataConnector.connector_type == connector_type,
+            DataConnector.target_identifier == clean_target,
         )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def list_connectors(
+    async def list_connectors(
         self,
         connector_type: ConnectorType | None = None,
         active_only: bool = False,
     ) -> list[DataConnector]:
-        query = self.db.query(DataConnector).order_by(DataConnector.created_at.desc())
+        stmt = select(DataConnector).order_by(DataConnector.created_at.desc())
         if connector_type is not None:
-            query = query.filter(DataConnector.connector_type == connector_type)
+            stmt = stmt.where(DataConnector.connector_type == connector_type)
         if active_only:
-            query = query.filter(DataConnector.is_active.is_(True))
-        return query.all()
+            stmt = stmt.where(DataConnector.is_active.is_(True))
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
     # ================= Mutations =================
 
-    def create_connector(self, cmd: CreateConnectorCommand) -> DataConnector:
+    async def create_connector(self, cmd: CreateConnectorCommand) -> DataConnector:
         clean_target = cmd.target_identifier.strip()
-        existing = self.get_by_type_and_target(cmd.connector_type, clean_target)
+        existing = await self.get_by_type_and_target(cmd.connector_type, clean_target)
         if existing:
             raise ConnectorAlreadyExistsError(cmd.connector_type.value, clean_target)
 
@@ -88,12 +90,12 @@ class ConnectorService:
             extra_metadata=cmd.extra_metadata,
         )
         self.db.add(connector)
-        self.db.commit()
-        self.db.refresh(connector)
+        await self.db.commit()
+        await self.db.refresh(connector)
         return connector
 
-    def update_connector(self, cmd: UpdateConnectorCommand) -> DataConnector:
-        connector = self.get_by_id_or_raise(cmd.connector_id)
+    async def update_connector(self, cmd: UpdateConnectorCommand) -> DataConnector:
+        connector = await self.get_by_id_or_raise(cmd.connector_id)
 
         if cmd.name is not None:
             connector.name = cmd.name.strip()
@@ -117,19 +119,18 @@ class ConnectorService:
         if cmd.client_secret is not None:
             connector.encrypted_client_secret = encrypt_token(cmd.client_secret) if cmd.client_secret else None
 
-        self.db.commit()
-        self.db.refresh(connector)
+        await self.db.commit()
+        await self.db.refresh(connector)
         return connector
 
-    def delete_connector(self, connector_id: UUID | str) -> None:
-        connector = self.get_by_id_or_raise(connector_id)
-        self.db.delete(connector)
-        self.db.commit()
+    async def delete_connector(self, connector_id: UUID | str) -> None:
+        connector = await self.get_by_id_or_raise(connector_id)
+        await self.db.delete(connector)
+        await self.db.commit()
 
     # ================= Security & Provider Execution =================
 
     def get_decrypted_credentials(self, connector: DataConnector) -> dict[str, str | None]:
-        """Decrypts credentials strictly in-memory for provider execution."""
         return {
             "api_key": decrypt_token(connector.encrypted_api_key),
             "access_token": decrypt_token(connector.encrypted_access_token),
@@ -139,8 +140,7 @@ class ConnectorService:
         }
 
     async def test_connection(self, connector_id: UUID | str) -> bool:
-        """Runs credentials verification against external provider."""
-        connector = self.get_by_id_or_raise(connector_id)
+        connector = await self.get_by_id_or_raise(connector_id)
         credentials = self.get_decrypted_credentials(connector)
         provider = resolve_provider(connector, credentials)
 
@@ -150,11 +150,11 @@ class ConnectorService:
                 connector.mark_synced()
             else:
                 connector.mark_error("Credentials rejected by external service.", is_auth_error=True)
-            self.db.commit()
+            await self.db.commit()
             return is_valid
         except Exception as exc:
             connector.mark_error(str(exc), is_auth_error=True)
-            self.db.commit()
+            await self.db.commit()
             raise
 
     async def fetch_opportunities(
@@ -163,8 +163,7 @@ class ConnectorService:
         min_impressions: int = 200,
         limit: int = 20,
     ) -> list[MetricOpportunityItem]:
-        """Queries external provider and returns normalized marketing opportunities."""
-        connector = self.get_by_id_or_raise(connector_id)
+        connector = await self.get_by_id_or_raise(connector_id)
 
         if not connector.is_active:
             raise InvalidConnectorConfigError(f"Connector '{connector.name}' is currently paused.")
@@ -178,10 +177,10 @@ class ConnectorService:
                 limit=limit,
             )
             connector.mark_synced()
-            self.db.commit()
+            await self.db.commit()
 
             return [MetricOpportunityItem(**item) for item in raw_opps]
         except Exception as exc:
             connector.mark_error(str(exc))
-            self.db.commit()
+            await self.db.commit()
             raise

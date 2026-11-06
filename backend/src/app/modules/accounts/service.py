@@ -6,7 +6,8 @@ from uuid import UUID
 
 from fastapi import WebSocket
 from playwright.async_api import async_playwright
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import AccountStatus, PlatformType
 from app.core.security import decrypt_token, encrypt_token
@@ -27,54 +28,48 @@ def _ensure_uuid(val: UUID | str) -> UUID:
 
 
 class AccountService:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
     # ================= Query Methods =================
 
-    def get_by_id(self, account_id: UUID | str) -> ConnectedAccount | None:
-        """Fetch a single account by its UUID, returning None if not found."""
+    async def get_by_id(self, account_id: UUID | str) -> ConnectedAccount | None:
         target_id = _ensure_uuid(account_id)
-        return (
-            self.db.query(ConnectedAccount)
-            .filter(ConnectedAccount.id == target_id)
-            .first()
-        )
+        stmt = select(ConnectedAccount).where(ConnectedAccount.id == target_id)
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_by_id_or_raise(self, account_id: UUID | str) -> ConnectedAccount:
-        """Fetch a single account by its UUID or raise AccountNotFoundError."""
-        account = self.get_by_id(account_id)
+    async def get_by_id_or_raise(self, account_id: UUID | str) -> ConnectedAccount:
+        account = await self.get_by_id(account_id)
         if not account:
             raise AccountNotFoundError(account_id)
         return account
 
-    def get_by_handle_and_platform(
+    async def get_by_handle_and_platform(
         self, platform: PlatformType, handle: str
     ) -> ConnectedAccount | None:
-        """Fetch an account by platform and username/handle."""
-        return (
-            self.db.query(ConnectedAccount)
-            .filter(
-                ConnectedAccount.platform == platform,
-                ConnectedAccount.handle == handle,
-            )
-            .first()
+        stmt = select(ConnectedAccount).where(
+            ConnectedAccount.platform == platform,
+            ConnectedAccount.handle == handle,
         )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def list_accounts(self, active_only: bool = False) -> list[ConnectedAccount]:
-        """List all accounts, optionally filtering for active status only."""
-        query = self.db.query(ConnectedAccount)
+    async def list_accounts(self, active_only: bool = False) -> list[ConnectedAccount]:
+        stmt = select(ConnectedAccount).order_by(ConnectedAccount.created_at.desc())
         if active_only:
-            query = query.filter(ConnectedAccount.is_active.is_(True))
-        return query.all()
+            stmt = stmt.where(ConnectedAccount.is_active.is_(True))
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
     # ================= Command / Mutation Methods =================
 
-    def create_account(self, cmd: CreateAccountCommand) -> ConnectedAccount:
-        """Creates a new connected account. Raises AccountAlreadyExistsError on duplicate."""
-        existing = self.get_by_handle_and_platform(cmd.platform, cmd.handle)
+    async def create_account(self, cmd: CreateAccountCommand) -> ConnectedAccount:
+        existing = await self.get_by_handle_and_platform(cmd.platform, cmd.handle)
         if existing:
-            platform_str = cmd.platform.value if hasattr(cmd.platform, "value") else str(cmd.platform)
+            platform_str = (
+                cmd.platform.value if hasattr(cmd.platform, "value") else str(cmd.platform)
+            )
             raise AccountAlreadyExistsError(platform=platform_str, handle=cmd.handle)
 
         account = ConnectedAccount(
@@ -93,13 +88,16 @@ class AccountService:
             encrypted_api_secret=encrypt_token(cmd.api_secret) if cmd.api_secret else None,
         )
         self.db.add(account)
-        self.db.commit()
-        self.db.refresh(account)
-        return account
+        try:
+            await self.db.commit()
+            await self.db.refresh(account)
+            return account
+        except Exception:
+            await self.db.rollback()
+            raise
 
-    def update_account(self, cmd: UpdateAccountCommand) -> ConnectedAccount:
-        """Updates an existing account or raises AccountNotFoundError."""
-        account = self.get_by_id_or_raise(cmd.account_id)
+    async def update_account(self, cmd: UpdateAccountCommand) -> ConnectedAccount:
+        account = await self.get_by_id_or_raise(cmd.account_id)
 
         if cmd.display_name is not None:
             account.display_name = cmd.display_name
@@ -115,23 +113,26 @@ class AccountService:
             account.extra_metadata = cmd.extra_metadata
 
         if cmd.access_token is not None:
-            account.encrypted_access_token = encrypt_token(cmd.access_token) if cmd.access_token else None
+            account.encrypted_access_token = (
+                encrypt_token(cmd.access_token) if cmd.access_token else None
+            )
         if cmd.refresh_token is not None:
-            account.encrypted_refresh_token = encrypt_token(cmd.refresh_token) if cmd.refresh_token else None
+            account.encrypted_refresh_token = (
+                encrypt_token(cmd.refresh_token) if cmd.refresh_token else None
+            )
         if cmd.api_key is not None:
             account.encrypted_api_key = encrypt_token(cmd.api_key) if cmd.api_key else None
         if cmd.api_secret is not None:
             account.encrypted_api_secret = encrypt_token(cmd.api_secret) if cmd.api_secret else None
 
-        self.db.commit()
-        self.db.refresh(account)
+        await self.db.commit()
+        await self.db.refresh(account)
         return account
 
-    def delete_account(self, account_id: UUID | str) -> None:
-        """Removes an account from the database or raises AccountNotFoundError."""
-        account = self.get_by_id_or_raise(account_id)
-        self.db.delete(account)
-        self.db.commit()
+    async def delete_account(self, account_id: UUID | str) -> None:
+        account = await self.get_by_id_or_raise(account_id)
+        await self.db.delete(account)
+        await self.db.commit()
 
     # ================= Security & Automation Utilities =================
 
@@ -144,9 +145,8 @@ class AccountService:
             "api_secret": decrypt_token(account.encrypted_api_secret),
         }
 
-    def record_post_activity(self, account_id: UUID | str) -> ConnectedAccount:
-        """Increments daily post count after checking cooldown and daily limits."""
-        account = self.get_by_id_or_raise(account_id)
+    async def record_post_activity(self, account_id: UUID | str) -> ConnectedAccount:
+        account = await self.get_by_id_or_raise(account_id)
 
         if account.is_in_cooldown():
             until_str = account.cooldown_until.isoformat() if account.cooldown_until else "unknown"
@@ -158,45 +158,38 @@ class AccountService:
         account.daily_posts_sent += 1
         account.last_action_at = datetime.now(UTC)
 
-        self.db.commit()
-        self.db.refresh(account)
+        await self.db.commit()
+        await self.db.refresh(account)
         return account
 
-    def record_dm_activity(self, account_id: UUID | str) -> ConnectedAccount:
-        """Increments daily DM count."""
-        account = self.get_by_id_or_raise(account_id)
+    async def record_dm_activity(self, account_id: UUID | str) -> ConnectedAccount:
+        account = await self.get_by_id_or_raise(account_id)
         account._check_and_reset_daily_quotas()
         account.daily_dms_sent += 1
         account.last_action_at = datetime.now(UTC)
 
-        self.db.commit()
-        self.db.refresh(account)
+        await self.db.commit()
+        await self.db.refresh(account)
         return account
 
-    def set_cooldown(self, account_id: UUID | str, until: datetime) -> ConnectedAccount:
-        """Applies a temporary anti-ban rate limit cooldown to the account."""
-        account = self.get_by_id_or_raise(account_id)
+    async def set_cooldown(self, account_id: UUID | str, until: datetime) -> ConnectedAccount:
+        account = await self.get_by_id_or_raise(account_id)
         account.status = AccountStatus.RATE_LIMITED
         account.cooldown_until = until
 
-        self.db.commit()
-        self.db.refresh(account)
+        await self.db.commit()
+        await self.db.refresh(account)
         return account
 
-    # ================= Browser Session & Authentication =================
-
-    def mark_browser_session_authenticated(
+    async def mark_browser_session_authenticated(
         self, account_id: UUID | str, storage_path: str | Path
     ) -> ConnectedAccount:
-        """
-        Updates account state after successful interactive login (2FA/cookies).
-        """
-        account = self.get_by_id_or_raise(account_id)
+        account = await self.get_by_id_or_raise(account_id)
         account.has_valid_browser_session = True
         account.last_browser_login_at = datetime.now(UTC)
         account.browser_storage_path = str(storage_path)
-        self.db.commit()
-        self.db.refresh(account)
+        await self.db.commit()
+        await self.db.refresh(account)
         return account
 
     async def run_session_authentication_stream(
@@ -204,13 +197,10 @@ class AccountService:
         account_id: UUID | str,
         websocket: WebSocket,
     ) -> None:
-        """
-        Orchestrates an interactive stealth browser screencast over WebSocket
-        allowing the user to visually solve 2FA/Captchas and capture cookies.
-        """
-
-        account = self.get_by_id_or_raise(account_id)
-        platform_str = account.platform.value if hasattr(account.platform, "value") else str(account.platform)
+        account = await self.get_by_id_or_raise(account_id)
+        platform_str = (
+            account.platform.value if hasattr(account.platform, "value") else str(account.platform)
+        )
 
         session_mgr = BrowserSessionManager()
         user_data_dir = session_mgr.get_account_session_dir(account.id)
@@ -223,7 +213,9 @@ class AccountService:
             "email": "https://mail.google.com/",
         }
 
-        await websocket.send_json({"type": "status", "message": "Launching isolated browser container..."})
+        await websocket.send_json(
+            {"type": "status", "message": "Launching isolated browser container..."}
+        )
 
         async with async_playwright() as playwright:
             context = await create_stealth_context(
@@ -236,7 +228,6 @@ class AccountService:
             page = context.pages[0] if context.pages else await context.new_page()
             await page.set_viewport_size({"width": 1280, "height": 800})
 
-            # Attach CDP Screencast
             cdp = await context.new_cdp_session(page)
 
             def on_screencast_frame(event: dict[str, Any]):
@@ -263,7 +254,9 @@ class AccountService:
                 },
             )
 
-            target_url = platform_home_urls.get(platform_str.lower(), f"https://www.{platform_str}.com/")
+            target_url = platform_home_urls.get(
+                platform_str.lower(), f"https://www.{platform_str}.com/"
+            )
             await websocket.send_json({"type": "status", "message": f"Loading {target_url}..."})
             await page.goto(target_url, wait_until="domcontentloaded")
             await websocket.send_json({"type": "navigated", "url": page.url})
@@ -271,11 +264,11 @@ class AccountService:
 
             page.on(
                 "framenavigated",
-                lambda frame: asyncio.create_task(
-                    websocket.send_json({"type": "navigated", "url": page.url})
-                )
-                if frame == page.main_frame
-                else None,
+                lambda frame: (
+                    asyncio.create_task(websocket.send_json({"type": "navigated", "url": page.url}))
+                    if frame == page.main_frame
+                    else None
+                ),
             )
 
             try:
@@ -302,9 +295,6 @@ class AccountService:
                             await websocket.send_json({"type": "navigated", "url": page.url})
 
             finally:
-                # 1. Save session cookies to disk
                 await session_mgr.save_session_state(context, account.id)
                 await context.close()
-
-                # 2. Update database record via service method
-                self.mark_browser_session_authenticated(account.id, storage_state)
+                await self.mark_browser_session_authenticated(account.id, storage_state)

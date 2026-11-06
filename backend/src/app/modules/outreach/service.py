@@ -1,6 +1,8 @@
 from uuid import UUID
 
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.common.enums import (
     LeadStage,
@@ -38,7 +40,7 @@ def _ensure_uuid(val: UUID | str) -> UUID:
 
 
 class OutreachService:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
         self.account_service = AccountService(db)
 
@@ -46,34 +48,30 @@ class OutreachService:
     # Lead / Influencer Directory Management
     # =========================================================================
 
-    def get_lead_by_id(self, lead_id: UUID | str) -> Lead | None:
+    async def get_lead_by_id(self, lead_id: UUID | str) -> Lead | None:
         target_id = _ensure_uuid(lead_id)
-        return (
-            self.db.query(Lead)
-            .filter(Lead.id == target_id)
-            .first()
-        )
+        stmt = select(Lead).where(Lead.id == target_id)
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_lead_by_id_or_raise(self, lead_id: UUID | str) -> Lead:
-        lead = self.get_lead_by_id(lead_id)
+    async def get_lead_by_id_or_raise(self, lead_id: UUID | str) -> Lead:
+        lead = await self.get_lead_by_id(lead_id)
         if not lead:
             raise LeadNotFoundError(lead_id)
         return lead
 
-    def get_lead_by_platform_and_handle(
+    async def get_lead_by_platform_and_handle(
         self, platform: PlatformType, handle: str
     ) -> Lead | None:
         clean_handle = handle.lstrip("@").strip()
-        return (
-            self.db.query(Lead)
-            .filter(
-                Lead.platform == platform,
-                Lead.handle == clean_handle,
-            )
-            .first()
+        stmt = select(Lead).where(
+            Lead.platform == platform,
+            Lead.handle == clean_handle,
         )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def list_leads(
+    async def list_leads(
         self,
         platform: PlatformType | None = None,
         stage: LeadStage | None = None,
@@ -81,18 +79,20 @@ class OutreachService:
         limit: int = 50,
         offset: int = 0,
     ) -> list[Lead]:
-        query = self.db.query(Lead).order_by(Lead.created_at.desc())
+        stmt = select(Lead).order_by(Lead.created_at.desc())
         if platform is not None:
-            query = query.filter(Lead.platform == platform)
+            stmt = stmt.where(Lead.platform == platform)
         if stage is not None:
-            query = query.filter(Lead.stage == stage)
+            stmt = stmt.where(Lead.stage == stage)
         if tier is not None:
-            query = query.filter(Lead.tier == tier)
-        return query.offset(offset).limit(limit).all()
+            stmt = stmt.where(Lead.tier == tier)
 
-    def create_lead(self, cmd: CreateLeadCommand) -> Lead:
+        result = await self.db.execute(stmt.offset(offset).limit(limit))
+        return list(result.scalars().all())
+
+    async def create_lead(self, cmd: CreateLeadCommand) -> Lead:
         clean_handle = cmd.handle.lstrip("@").strip()
-        existing = self.get_lead_by_platform_and_handle(cmd.platform, clean_handle)
+        existing = await self.get_lead_by_platform_and_handle(cmd.platform, clean_handle)
         if existing:
             platform_str = cmd.platform.value if hasattr(cmd.platform, "value") else str(cmd.platform)
             raise LeadAlreadyExistsError(platform=platform_str, handle=clean_handle)
@@ -112,12 +112,12 @@ class OutreachService:
             extra_metadata=cmd.extra_metadata,
         )
         self.db.add(lead)
-        self.db.commit()
-        self.db.refresh(lead)
+        await self.db.commit()
+        await self.db.refresh(lead)
         return lead
 
-    def update_lead(self, cmd: UpdateLeadCommand) -> Lead:
-        lead = self.get_lead_by_id_or_raise(cmd.lead_id)
+    async def update_lead(self, cmd: UpdateLeadCommand) -> Lead:
+        lead = await self.get_lead_by_id_or_raise(cmd.lead_id)
 
         if cmd.display_name is not None:
             lead.display_name = cmd.display_name
@@ -140,50 +140,43 @@ class OutreachService:
         if cmd.extra_metadata is not None:
             lead.extra_metadata = cmd.extra_metadata
 
-        self.db.commit()
-        self.db.refresh(lead)
+        await self.db.commit()
+        await self.db.refresh(lead)
         return lead
 
-    def delete_lead(self, lead_id: UUID | str) -> None:
-        lead = self.get_lead_by_id_or_raise(lead_id)
-        # Purge dependent messages to guarantee cascade across all database dialects
-        self.db.query(OutreachMessage).filter(OutreachMessage.lead_id == lead.id).delete(
-            synchronize_session="fetch"
-        )
-        self.db.delete(lead)
-        self.db.commit()
+    async def delete_lead(self, lead_id: UUID | str) -> None:
+        lead = await self.get_lead_by_id_or_raise(lead_id)
+        await self.db.execute(delete(OutreachMessage).where(OutreachMessage.lead_id == lead.id))
+        await self.db.delete(lead)
+        await self.db.commit()
 
     # =========================================================================
     # Outreach Campaign Management
     # =========================================================================
 
-    def get_campaign_by_id(self, campaign_id: UUID | str) -> OutreachCampaign | None:
+    async def get_campaign_by_id(self, campaign_id: UUID | str) -> OutreachCampaign | None:
         target_id = _ensure_uuid(campaign_id)
-        return (
-            self.db.query(OutreachCampaign)
-            .filter(OutreachCampaign.id == target_id)
-            .first()
-        )
+        stmt = select(OutreachCampaign).where(OutreachCampaign.id == target_id)
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_campaign_by_id_or_raise(self, campaign_id: UUID | str) -> OutreachCampaign:
-        campaign = self.get_campaign_by_id(campaign_id)
+    async def get_campaign_by_id_or_raise(self, campaign_id: UUID | str) -> OutreachCampaign:
+        campaign = await self.get_campaign_by_id(campaign_id)
         if not campaign:
             raise OutreachCampaignNotFoundError(campaign_id)
         return campaign
 
-    def list_campaigns(self, is_active: bool | None = None) -> list[OutreachCampaign]:
-        query = self.db.query(OutreachCampaign).order_by(OutreachCampaign.created_at.desc())
+    async def list_campaigns(self, is_active: bool | None = None) -> list[OutreachCampaign]:
+        stmt = select(OutreachCampaign).order_by(OutreachCampaign.created_at.desc())
         if is_active is not None:
-            query = query.filter(OutreachCampaign.is_active == is_active)
-        return query.all()
+            stmt = stmt.where(OutreachCampaign.is_active == is_active)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
-    def create_campaign(self, cmd: CreateOutreachCampaignCommand) -> OutreachCampaign:
-        # Verify account exists
-        account = (
-            self.db.query(ConnectedAccount)
-            .filter(ConnectedAccount.id == cmd.account_id)
-            .first()
-        )
+    async def create_campaign(self, cmd: CreateOutreachCampaignCommand) -> OutreachCampaign:
+        acc_stmt = select(ConnectedAccount).where(ConnectedAccount.id == cmd.account_id)
+        acc_res = await self.db.execute(acc_stmt)
+        account = acc_res.scalars().first()
         if not account:
             raise AccountNotFoundError(cmd.account_id)
 
@@ -197,19 +190,17 @@ class OutreachService:
             extra_metadata=cmd.extra_metadata,
         )
         self.db.add(campaign)
-        self.db.commit()
-        self.db.refresh(campaign)
+        await self.db.commit()
+        await self.db.refresh(campaign)
         return campaign
 
-    def update_campaign(self, cmd: UpdateOutreachCampaignCommand) -> OutreachCampaign:
-        campaign = self.get_campaign_by_id_or_raise(cmd.campaign_id)
+    async def update_campaign(self, cmd: UpdateOutreachCampaignCommand) -> OutreachCampaign:
+        campaign = await self.get_campaign_by_id_or_raise(cmd.campaign_id)
 
         if cmd.account_id is not None:
-            account = (
-                self.db.query(ConnectedAccount)
-                .filter(ConnectedAccount.id == cmd.account_id)
-                .first()
-            )
+            acc_stmt = select(ConnectedAccount).where(ConnectedAccount.id == cmd.account_id)
+            acc_res = await self.db.execute(acc_stmt)
+            account = acc_res.scalars().first()
             if not account:
                 raise AccountNotFoundError(cmd.account_id)
             campaign.account_id = cmd.account_id
@@ -227,83 +218,81 @@ class OutreachService:
         if cmd.extra_metadata is not None:
             campaign.extra_metadata = cmd.extra_metadata
 
-        self.db.commit()
-        self.db.refresh(campaign)
+        await self.db.commit()
+        await self.db.refresh(campaign)
         return campaign
 
-    def delete_campaign(self, campaign_id: UUID | str) -> None:
-        campaign = self.get_campaign_by_id_or_raise(campaign_id)
-        # Detach messages from campaign before deletion
-        self.db.query(OutreachMessage).filter(
-            OutreachMessage.outreach_campaign_id == campaign.id
-        ).update({OutreachMessage.outreach_campaign_id: None})
-        self.db.delete(campaign)
-        self.db.commit()
+    async def delete_campaign(self, campaign_id: UUID | str) -> None:
+        campaign = await self.get_campaign_by_id_or_raise(campaign_id)
+        await self.db.execute(
+            update(OutreachMessage)
+            .where(OutreachMessage.outreach_campaign_id == campaign.id)
+            .values(outreach_campaign_id=None)
+        )
+        await self.db.delete(campaign)
+        await self.db.commit()
 
     # =========================================================================
     # Outreach Message Staging & Human Review Gates
     # =========================================================================
 
-    def get_message_by_id(self, message_id: UUID | str) -> OutreachMessage | None:
+    async def get_message_by_id(self, message_id: UUID | str) -> OutreachMessage | None:
         target_id = _ensure_uuid(message_id)
-        return (
-            self.db.query(OutreachMessage)
+        stmt = (
+            select(OutreachMessage)
             .options(
-                joinedload(OutreachMessage.lead),
-                joinedload(OutreachMessage.account),
+                selectinload(OutreachMessage.lead),
+                selectinload(OutreachMessage.account),
             )
-            .filter(OutreachMessage.id == target_id)
-            .first()
+            .where(OutreachMessage.id == target_id)
         )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_message_by_id_or_raise(self, message_id: UUID | str) -> OutreachMessage:
-        message = self.get_message_by_id(message_id)
+    async def get_message_by_id_or_raise(self, message_id: UUID | str) -> OutreachMessage:
+        message = await self.get_message_by_id(message_id)
         if not message:
             raise OutreachMessageNotFoundError(message_id)
         return message
 
-    def list_messages(
+    async def list_messages(
         self,
         lead_id: UUID | None = None,
         campaign_id: UUID | None = None,
         status: OutreachMessageStatus | None = None,
         limit: int = 50,
     ) -> list[OutreachMessage]:
-        query = (
-            self.db.query(OutreachMessage)
+        stmt = (
+            select(OutreachMessage)
             .options(
-                joinedload(OutreachMessage.lead),
-                joinedload(OutreachMessage.account),
+                selectinload(OutreachMessage.lead),
+                selectinload(OutreachMessage.account),
             )
             .order_by(OutreachMessage.created_at.desc())
         )
         if lead_id is not None:
-            query = query.filter(OutreachMessage.lead_id == lead_id)
+            stmt = stmt.where(OutreachMessage.lead_id == lead_id)
         if campaign_id is not None:
-            query = query.filter(OutreachMessage.outreach_campaign_id == campaign_id)
+            stmt = stmt.where(OutreachMessage.outreach_campaign_id == campaign_id)
         if status is not None:
-            query = query.filter(OutreachMessage.status == status)
-        return query.limit(limit).all()
+            stmt = stmt.where(OutreachMessage.status == status)
 
-    def stage_message(self, cmd: StageMessageCommand) -> OutreachMessage:
-        """
-        Stages a cold message behind a human approval gate.
-        Validates lead contactability and account availability.
-        """
-        lead = self.get_lead_by_id_or_raise(cmd.lead_id)
+        result = await self.db.execute(stmt.limit(limit))
+        return list(result.scalars().all())
+
+    async def stage_message(self, cmd: StageMessageCommand) -> OutreachMessage:
+        lead = await self.get_lead_by_id_or_raise(cmd.lead_id)
         if not lead.can_contact():
             raise LeadUncontactableError(handle=lead.handle, stage=lead.stage.value)
 
-        account = (
-            self.db.query(ConnectedAccount)
-            .filter(ConnectedAccount.id == cmd.account_id)
-            .first()
-        )
+        acc_stmt = select(ConnectedAccount).where(ConnectedAccount.id == cmd.account_id)
+        acc_res = await self.db.execute(acc_stmt)
+        account = acc_res.scalars().first()
         if not account:
             raise AccountNotFoundError(cmd.account_id)
 
         if cmd.outreach_campaign_id:
-            self.get_campaign_by_id_or_raise(cmd.outreach_campaign_id)
+            await self.get_campaign_by_id_or_raise(cmd.outreach_campaign_id)
 
         message = OutreachMessage(
             lead_id=cmd.lead_id,
@@ -315,26 +304,20 @@ class OutreachService:
             extra_metadata=cmd.extra_metadata,
         )
         self.db.add(message)
-        self.db.commit()
-        self.db.refresh(message)
+        await self.db.commit()
+        await self.db.refresh(message)
         return message
 
-    def review_message(self, cmd: ReviewMessageCommand) -> OutreachMessage:
-        """
-        Human-in-the-loop gate: Approves or rejects a staged cold message.
-        When approving, validates account's safe anti-ban cold DM quota.
-        """
-        message = self.get_message_by_id_or_raise(cmd.message_id)
+    async def review_message(self, cmd: ReviewMessageCommand) -> OutreachMessage:
+        message = await self.get_message_by_id_or_raise(cmd.message_id)
         if message.status not in (OutreachMessageStatus.STAGED, OutreachMessageStatus.DRAFT):
             raise MessageAlreadyProcessedError(message.id)
 
         if cmd.status == OutreachMessageStatus.APPROVED:
-            # Check account anti-ban limits before approving
-            account = (
-                self.db.query(ConnectedAccount)
-                .filter(ConnectedAccount.id == message.account_id)
-                .first()
-            )
+            acc_stmt = select(ConnectedAccount).where(ConnectedAccount.id == message.account_id)
+            acc_res = await self.db.execute(acc_stmt)
+            account = acc_res.scalars().first()
+
             if account and not account.can_send_dm_today():
                 raise DailyDMQuotaExceededError(
                     handle=account.handle,
@@ -345,43 +328,35 @@ class OutreachService:
         elif cmd.status == OutreachMessageStatus.REJECTED:
             message.mark_as_rejected(reason=cmd.rejection_reason)
 
-        self.db.commit()
-        self.db.refresh(message)
+        await self.db.commit()
+        await self.db.refresh(message)
         return message
 
-    def record_delivery(self, cmd: RecordMessageDeliveryCommand) -> OutreachMessage:
-        """
-        Records platform delivery, increments account's daily DM quota,
-        and advances lead stage to 'contacted'.
-        """
-        message = self.get_message_by_id_or_raise(cmd.message_id)
+    async def record_delivery(self, cmd: RecordMessageDeliveryCommand) -> OutreachMessage:
+        message = await self.get_message_by_id_or_raise(cmd.message_id)
         message.mark_as_dispatched(platform_id=cmd.platform_message_id)
 
-        # Increment daily DM counter on the sender profile
-        self.account_service.record_dm_activity(message.account_id)
+        await self.account_service.record_dm_activity(message.account_id)
 
-        # Advance lead CRM stage if in discovery/qualification
-        lead = self.get_lead_by_id(message.lead_id)
+        lead = await self.get_lead_by_id(message.lead_id)
         if lead and lead.stage in (LeadStage.DISCOVERED, LeadStage.QUALIFIED):
             lead.stage = LeadStage.CONTACTED
 
-        self.db.commit()
-        self.db.refresh(message)
+        await self.db.commit()
+        await self.db.refresh(message)
         return message
 
-    def record_failure(self, cmd: RecordMessageFailureCommand) -> OutreachMessage:
-        """Records platform delivery failure."""
-        message = self.get_message_by_id_or_raise(cmd.message_id)
+    async def record_failure(self, cmd: RecordMessageFailureCommand) -> OutreachMessage:
+        message = await self.get_message_by_id_or_raise(cmd.message_id)
         message.mark_as_failed(error=cmd.error_message)
-        self.db.commit()
-        self.db.refresh(message)
+        await self.db.commit()
+        await self.db.refresh(message)
         return message
 
-    def delete_message(self, message_id: UUID | str) -> None:
-        """Permanently removes a draft, staged, or rejected message."""
-        message = self.get_message_by_id_or_raise(message_id)
+    async def delete_message(self, message_id: UUID | str) -> None:
+        message = await self.get_message_by_id_or_raise(message_id)
         if message.status == OutreachMessageStatus.DISPATCHED:
             raise MessageAlreadyProcessedError(message.id)
 
-        self.db.delete(message)
-        self.db.commit()
+        await self.db.delete(message)
+        await self.db.commit()

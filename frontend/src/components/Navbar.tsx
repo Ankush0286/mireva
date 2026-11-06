@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ChevronDown,
   Users2,
@@ -10,28 +11,11 @@ import {
   ExternalLink,
 } from 'lucide-react';
 
-export type ActiveView =
-  | 'home'
-  | 'dashboard'
-  | 'accounts'
-  | 'campaigns'
-  | 'triggers'
-  | 'outreach'
-  | 'history';
-
-interface NavbarProps {
-  activeView: ActiveView;
-  onSelectView: (view: ActiveView) => void;
-}
-
-export const Navbar: React.FC<NavbarProps> = ({
-  activeView: _activeView,
-  onSelectView,
-}) => {
+export const Navbar: React.FC = () => {
+  const navigate = useNavigate();
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const navRef = useRef<HTMLDivElement | null>(null);
 
-  // Close dropdown on click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (navRef.current && !navRef.current.contains(e.target as Node)) {
@@ -74,7 +58,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  onSelectView('accounts');
+                  navigate('/accounts');
                   setOpenDropdown(null);
                 }}
                 className="w-full px-4 py-2.5 text-xs font-semibold text-[#091326] hover:bg-[#F2F6FC] flex items-center gap-2.5 transition-colors cursor-pointer"
@@ -88,7 +72,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  onSelectView('campaigns');
+                  navigate('/campaigns');
                   setOpenDropdown(null);
                 }}
                 className="w-full px-4 py-2.5 text-xs font-semibold text-[#091326] hover:bg-[#F2F6FC] flex items-center gap-2.5 transition-colors cursor-pointer"
@@ -125,7 +109,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  onSelectView('triggers');
+                  navigate('/triggers');
                   setOpenDropdown(null);
                 }}
                 className="w-full px-4 py-2.5 text-xs font-semibold text-[#091326] hover:bg-[#F2F6FC] flex items-center gap-2.5 transition-colors cursor-pointer"
@@ -139,7 +123,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  onSelectView('outreach');
+                  navigate('/outreach');
                   setOpenDropdown(null);
                 }}
                 className="w-full px-4 py-2.5 text-xs font-semibold text-[#091326] hover:bg-[#F2F6FC] flex items-center gap-2.5 transition-colors cursor-pointer"
@@ -176,7 +160,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  onSelectView('history');
+                  navigate('/system');
                   setOpenDropdown(null);
                 }}
                 className="w-full px-4 py-2 text-xs font-semibold text-[#091326] hover:bg-[#F2F6FC] flex items-center gap-2 transition-colors cursor-pointer"
@@ -197,10 +181,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           )}
         </div>
 
-        {/* 4. Dashboard / Pricing */}
+        {/* 4. Dashboard */}
         <button
           type="button"
-          onClick={() => onSelectView('dashboard')}
+          onClick={() => navigate('/overview')}
           className="flex items-center gap-1.5 text-[14px] font-semibold text-[#091326] hover:text-[#0E3A75] transition-colors cursor-pointer"
         >
           <LayoutDashboard size={14} className="text-[#0E3A75] hidden sm:inline" />

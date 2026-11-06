@@ -33,7 +33,7 @@ NAV_CREATE_BUTTON = (
     'svg[aria-label="Create"], '
     '[aria-label="New post"], '
     '[aria-label="Create"], '
-    'span:has-text("Create")'
+    'span:text-is("Create")'
 )
 NAV_DIRECT_MESSAGES = 'svg[aria-label="Direct"], svg[aria-label="Messenger"]'
 NAV_SEARCH_BUTTON = 'svg[aria-label="Search"]'

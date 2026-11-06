@@ -17,9 +17,9 @@ async def list_marketing_data_sources(
     Lists all connected external marketing data sources (Google Search Console,
     Ahrefs, GA4, PostHog, etc.) and their health status.
     """
-    with ctx.deps.db_session_scope() as db:
+    async with ctx.deps.db_session_scope() as db:
         service = ConnectorService(db)
-        connectors = service.list_connectors(active_only=active_only)
+        connectors = await service.list_connectors(active_only=active_only)
 
         return [
             {
@@ -46,9 +46,9 @@ async def get_search_console_opportunities(
     between positions 4 and 20 (striking-distance content opportunities).
     """
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = ConnectorService(db)
-            connectors = service.list_connectors(
+            connectors = await service.list_connectors(
                 connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE, active_only=True
             )
 
@@ -85,14 +85,14 @@ async def get_competitor_keyword_gaps(
     with commercial intent.
     """
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = ConnectorService(db)
-            connectors = service.list_connectors(
+            connectors = await service.list_connectors(
                 connector_type=ConnectorType.AHREFS, active_only=True
             )
 
             if not connectors:
-                connectors = service.list_connectors(
+                connectors = await service.list_connectors(
                     connector_type=ConnectorType.DATAFORSEO, active_only=True
                 )
 

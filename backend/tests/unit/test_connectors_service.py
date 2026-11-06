@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import ConnectorStatus, ConnectorType
 from app.modules.connectors.commands import (
@@ -17,7 +17,8 @@ from app.modules.connectors.exceptions import (
 from app.modules.connectors.service import ConnectorService
 
 
-def test_create_connector_encrypts_credentials(db_session: Session):
+@pytest.mark.anyio
+async def test_create_connector_encrypts_credentials(db_session: AsyncSession):
     service = ConnectorService(db_session)
     cmd = CreateConnectorCommand(
         name="Production Search Console",
@@ -28,7 +29,7 @@ def test_create_connector_encrypts_credentials(db_session: Session):
         client_secret="secret_plain_client_secret",
     )
 
-    connector = service.create_connector(cmd)
+    connector = await service.create_connector(cmd)
 
     # 1. Primary keys and metadata persisted
     assert connector.id is not None
@@ -48,7 +49,8 @@ def test_create_connector_encrypts_credentials(db_session: Session):
     assert decrypted["client_secret"] == "secret_plain_client_secret"
 
 
-def test_create_duplicate_connector_raises_conflict(db_session: Session):
+@pytest.mark.anyio
+async def test_create_duplicate_connector_raises_conflict(db_session: AsyncSession):
     service = ConnectorService(db_session)
     cmd = CreateConnectorCommand(
         name="Primary Ahrefs",
@@ -57,22 +59,43 @@ def test_create_duplicate_connector_raises_conflict(db_session: Session):
         api_key="ahrefs-api-key-12345",
     )
 
-    service.create_connector(cmd)
+    await service.create_connector(cmd)
 
     # Attempting to register the same target identifier and provider type raises conflict
     with pytest.raises(ConnectorAlreadyExistsError):
-        service.create_connector(cmd)
+        await service.create_connector(cmd)
 
 
-def test_get_nonexistent_connector_raises_not_found(db_session: Session):
+@pytest.mark.anyio
+async def test_get_nonexistent_connector_raises_not_found(db_session: AsyncSession):
     service = ConnectorService(db_session)
     with pytest.raises(ConnectorNotFoundError):
-        service.get_by_id_or_raise(uuid4())
+        await service.get_by_id_or_raise(uuid4())
 
 
-def test_update_connector_fields_and_rotate_credentials(db_session: Session):
+@pytest.mark.anyio
+async def test_get_by_type_and_target(db_session: AsyncSession):
     service = ConnectorService(db_session)
-    created = service.create_connector(
+    cmd = CreateConnectorCommand(
+        name="GSC Query Target",
+        connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE,
+        target_identifier="https://target.site",
+        refresh_token="tok_target",
+    )
+    created = await service.create_connector(cmd)
+
+    found = await service.get_by_type_and_target(ConnectorType.GOOGLE_SEARCH_CONSOLE, "https://target.site")
+    assert found is not None
+    assert found.id == created.id
+
+    not_found = await service.get_by_type_and_target(ConnectorType.AHREFS, "https://target.site")
+    assert not_found is None
+
+
+@pytest.mark.anyio
+async def test_update_connector_fields_and_rotate_credentials(db_session: AsyncSession):
+    service = ConnectorService(db_session)
+    created = await service.create_connector(
         CreateConnectorCommand(
             name="Initial Connector",
             connector_type=ConnectorType.AHREFS,
@@ -82,7 +105,7 @@ def test_update_connector_fields_and_rotate_credentials(db_session: Session):
         )
     )
 
-    updated = service.update_connector(
+    updated = await service.update_connector(
         UpdateConnectorCommand(
             connector_id=created.id,
             name="Renamed Connector",
@@ -100,9 +123,10 @@ def test_update_connector_fields_and_rotate_credentials(db_session: Session):
     assert decrypted["api_key"] == "rotated-new-api-key"
 
 
-def test_delete_connector(db_session: Session):
+@pytest.mark.anyio
+async def test_delete_connector(db_session: AsyncSession):
     service = ConnectorService(db_session)
-    connector = service.create_connector(
+    connector = await service.create_connector(
         CreateConnectorCommand(
             name="To Delete",
             connector_type=ConnectorType.DATAFORSEO,
@@ -111,17 +135,18 @@ def test_delete_connector(db_session: Session):
         )
     )
 
-    service.delete_connector(connector.id)
-    assert service.get_by_id(connector.id) is None
+    await service.delete_connector(connector.id)
+    assert await service.get_by_id(connector.id) is None
 
     with pytest.raises(ConnectorNotFoundError):
-        service.delete_connector(connector.id)
+        await service.delete_connector(connector.id)
 
 
-def test_list_connectors_with_filters(db_session: Session):
+@pytest.mark.anyio
+async def test_list_connectors_with_filters(db_session: AsyncSession):
     service = ConnectorService(db_session)
 
-    c1 = service.create_connector(
+    c1 = await service.create_connector(
         CreateConnectorCommand(
             name="Active GSC",
             connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE,
@@ -129,7 +154,7 @@ def test_list_connectors_with_filters(db_session: Session):
             refresh_token="tok1",
         )
     )
-    c2 = service.create_connector(
+    c2 = await service.create_connector(
         CreateConnectorCommand(
             name="Inactive Ahrefs",
             connector_type=ConnectorType.AHREFS,
@@ -137,11 +162,11 @@ def test_list_connectors_with_filters(db_session: Session):
             api_key="tok2",
         )
     )
-    service.update_connector(UpdateConnectorCommand(connector_id=c2.id, is_active=False))
+    await service.update_connector(UpdateConnectorCommand(connector_id=c2.id, is_active=False))
 
-    all_connectors = service.list_connectors(active_only=False)
-    active_connectors = service.list_connectors(active_only=True)
-    gsc_connectors = service.list_connectors(connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE)
+    all_connectors = await service.list_connectors(active_only=False)
+    active_connectors = await service.list_connectors(active_only=True)
+    gsc_connectors = await service.list_connectors(connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE)
 
     assert len(all_connectors) == 2
     assert len(active_connectors) == 1
@@ -151,9 +176,9 @@ def test_list_connectors_with_filters(db_session: Session):
 
 
 @pytest.mark.anyio
-async def test_test_connection_provider_lifecycle(db_session: Session):
+async def test_test_connection_provider_lifecycle(db_session: AsyncSession):
     service = ConnectorService(db_session)
-    connector = service.create_connector(
+    connector = await service.create_connector(
         CreateConnectorCommand(
             name="GSC Health Check",
             connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE,
@@ -186,9 +211,33 @@ async def test_test_connection_provider_lifecycle(db_session: Session):
 
 
 @pytest.mark.anyio
-async def test_fetch_opportunities_orchestration(db_session: Session):
+async def test_test_connection_exception_marks_error(db_session: AsyncSession):
     service = ConnectorService(db_session)
-    connector = service.create_connector(
+    connector = await service.create_connector(
+        CreateConnectorCommand(
+            name="Error Connector",
+            connector_type=ConnectorType.AHREFS,
+            target_identifier="error-target.com",
+            api_key="bad-key",
+        )
+    )
+
+    with patch("app.modules.connectors.service.resolve_provider") as mock_resolve:
+        mock_provider = AsyncMock()
+        mock_provider.test_connection.side_effect = RuntimeError("Upstream API unreachable")
+        mock_resolve.return_value = mock_provider
+
+        with pytest.raises(RuntimeError):
+            await service.test_connection(connector.id)
+
+        assert connector.status == ConnectorStatus.NEEDS_REAUTH
+        assert "Upstream API unreachable" in (connector.last_error_message or "")
+
+
+@pytest.mark.anyio
+async def test_fetch_opportunities_orchestration(db_session: AsyncSession):
+    service = ConnectorService(db_session)
+    connector = await service.create_connector(
         CreateConnectorCommand(
             name="GSC Striking Distance",
             connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE,
@@ -227,14 +276,14 @@ async def test_fetch_opportunities_orchestration(db_session: Session):
         assert opportunities[0].position == 5.4
         assert opportunities[0].score == 82.5
 
-        db_session.refresh(connector)
+        await db_session.refresh(connector)
         assert connector.last_synced_at is not None
 
 
 @pytest.mark.anyio
-async def test_fetch_opportunities_on_paused_connector_raises(db_session: Session):
+async def test_fetch_opportunities_on_paused_connector_raises(db_session: AsyncSession):
     service = ConnectorService(db_session)
-    connector = service.create_connector(
+    connector = await service.create_connector(
         CreateConnectorCommand(
             name="Paused Source",
             connector_type=ConnectorType.AHREFS,
@@ -242,7 +291,7 @@ async def test_fetch_opportunities_on_paused_connector_raises(db_session: Sessio
             api_key="ahrefs_key",
         )
     )
-    service.update_connector(UpdateConnectorCommand(connector_id=connector.id, is_active=False))
+    await service.update_connector(UpdateConnectorCommand(connector_id=connector.id, is_active=False))
 
     with pytest.raises(InvalidConnectorConfigError):
         await service.fetch_opportunities(connector.id)

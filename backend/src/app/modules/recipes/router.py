@@ -9,10 +9,11 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import PlatformType
 from app.db.dependencies import get_db_session
+from app.db.session import async_session_factory
 from app.modules.recipes.schemas import (
     RecipeCreateRequest,
     RecipeResponse,
@@ -24,14 +25,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def get_recipe_service(db: Session = Depends(get_db_session)) -> RecipeService:
-    """Dependency injection factory for RecipeService."""
+def get_recipe_service(db: AsyncSession = Depends(get_db_session)) -> RecipeService:
     return RecipeService(db)
-
-
-# =============================================================================
-# REST Endpoints
-# =============================================================================
 
 
 @router.post(
@@ -40,11 +35,11 @@ def get_recipe_service(db: Session = Depends(get_db_session)) -> RecipeService:
     status_code=status.HTTP_201_CREATED,
     summary="Save a newly recorded action recipe",
 )
-def create_recipe(
+async def create_recipe(
     payload: RecipeCreateRequest,
     service: RecipeService = Depends(get_recipe_service),
 ) -> RecipeResponse:
-    recipe = service.create_recipe(payload.to_command())
+    recipe = await service.create_recipe(payload.to_command())
     return RecipeResponse.model_validate(recipe)
 
 
@@ -54,12 +49,12 @@ def create_recipe(
     status_code=status.HTTP_200_OK,
     summary="List action recipes with optional platform filter",
 )
-def list_recipes(
+async def list_recipes(
     platform: PlatformType | None = Query(default=None, description="Filter by platform"),
     active_only: bool = Query(default=False, description="Filter active recipes only"),
     service: RecipeService = Depends(get_recipe_service),
 ) -> list[RecipeResponse]:
-    recipes = service.list_recipes(platform=platform, active_only=active_only)
+    recipes = await service.list_recipes(platform=platform, active_only=active_only)
     return [RecipeResponse.model_validate(r) for r in recipes]
 
 
@@ -69,11 +64,11 @@ def list_recipes(
     status_code=status.HTTP_200_OK,
     summary="Get default active recipe for a platform",
 )
-def get_default_recipe(
+async def get_default_recipe(
     platform: PlatformType = Query(..., description="Target platform"),
     service: RecipeService = Depends(get_recipe_service),
 ) -> RecipeResponse | None:
-    recipe = service.get_default_recipe(platform=platform)
+    recipe = await service.get_default_recipe(platform=platform)
     if not recipe:
         return None
     return RecipeResponse.model_validate(recipe)
@@ -85,11 +80,11 @@ def get_default_recipe(
     status_code=status.HTTP_200_OK,
     summary="Get an action recipe by ID",
 )
-def get_recipe(
+async def get_recipe(
     recipe_id: UUID,
     service: RecipeService = Depends(get_recipe_service),
 ) -> RecipeResponse:
-    recipe = service.get_recipe_by_id_or_raise(recipe_id)
+    recipe = await service.get_recipe_by_id_or_raise(recipe_id)
     return RecipeResponse.model_validate(recipe)
 
 
@@ -99,12 +94,12 @@ def get_recipe(
     status_code=status.HTTP_200_OK,
     summary="Update recipe metadata, steps, or default status",
 )
-def update_recipe(
+async def update_recipe(
     recipe_id: UUID,
     payload: RecipeUpdateRequest,
     service: RecipeService = Depends(get_recipe_service),
 ) -> RecipeResponse:
-    recipe = service.update_recipe(payload.to_command(recipe_id))
+    recipe = await service.update_recipe(payload.to_command(recipe_id))
     return RecipeResponse.model_validate(recipe)
 
 
@@ -113,30 +108,27 @@ def update_recipe(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete an action recipe",
 )
-def delete_recipe(
+async def delete_recipe(
     recipe_id: UUID,
     service: RecipeService = Depends(get_recipe_service),
 ) -> None:
-    service.delete_recipe(recipe_id)
-
-
-# =============================================================================
-# WebSocket Transport Endpoint
-# =============================================================================
+    await service.delete_recipe(recipe_id)
 
 
 @router.websocket("/record/ws")
 async def recorder_websocket_stream(
     websocket: WebSocket,
     platform: str = "instagram",
-    service: RecipeService = Depends(get_recipe_service),
 ):
     """
-    WebSocket transport endpoint delegating recipe recording stream to RecipeService.
+    Hardened WebSocket stream: Uses isolated short-lived DB sessions
+    so long recording sessions never hold connections hostage.
     """
     await websocket.accept()
     try:
-        await service.run_recipe_recorder_stream(platform=platform, websocket=websocket)
+        async with async_session_factory() as db:
+            service = RecipeService(db)
+            await service.run_recipe_recorder_stream(platform=platform, websocket=websocket)
     except WebSocketDisconnect:
         logger.debug("Client disconnected from recipe recorder stream: %s", platform)
     except Exception as exc:

@@ -24,16 +24,15 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
     DEBUG: bool = False
 
-    # Turso / libSQL Configuration
-    TURSO_DATABASE_URL: str = ""
-    TURSO_AUTH_TOKEN: str = ""
-    LOCAL_DB_PATH: str = "storage/local.db"
+    # Database Configuration (Supabase / PostgreSQL)
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres"
 
-    # Database Pool & Engine Settings (for SQLAlchemy)
+    # Database Connection Pool Settings
     DB_ECHO: bool = False
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
 
+    # AI Model Gateways & Security
     OPENROUTER_API_KEY: SecretStr
     FIREWORKS_API_KEY: SecretStr
     SECRET_KEY: SecretStr = SecretStr("default-dev-secret-key-32-bytes!")
@@ -46,10 +45,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """
-    Cached settings instance so the .env file is read and parsed
-    only once during application startup.
-    """
+    """Cached settings instance parsed once at startup."""
     return Settings()
 
 

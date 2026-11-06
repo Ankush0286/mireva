@@ -1,12 +1,19 @@
 from app.db.base import Base
-from app.db.proxy import LibSqlProxyConnection
-from app.db.session import engine, get_db_session, session_factory, sync_replica
+from app.db.session import (
+    async_engine,
+    async_session_factory,
+    engine,
+    get_db_session,
+    session_factory,
+    sync_replica,
+)
 
 __all__ = [
     "Base",
-    "LibSqlProxyConnection",
+    "async_engine",
+    "async_session_factory",
     "engine",
-    "get_db_session",
     "session_factory",
+    "get_db_session",
     "sync_replica",
 ]

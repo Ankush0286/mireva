@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.dependencies import get_db_session
 from app.modules.brand.schemas import (
@@ -14,7 +14,7 @@ from app.modules.brand.service import BrandService
 router = APIRouter()
 
 
-def get_brand_service(db: Session = Depends(get_db_session)) -> BrandService:
+def get_brand_service(db: AsyncSession = Depends(get_db_session)) -> BrandService:
     return BrandService(db)
 
 
@@ -24,10 +24,10 @@ def get_brand_service(db: Session = Depends(get_db_session)) -> BrandService:
     status_code=status.HTTP_200_OK,
     summary="Get active primary Brand Kit",
 )
-def get_primary_brand_kit(
+async def get_primary_brand_kit(
     service: BrandService = Depends(get_brand_service),
 ) -> BrandKitResponse:
-    kit = service.get_or_create_default_primary()
+    kit = await service.get_or_create_default_primary()
     return BrandKitResponse.model_validate(kit)
 
 
@@ -37,11 +37,11 @@ def get_primary_brand_kit(
     status_code=status.HTTP_201_CREATED,
     summary="Create a new Brand Kit",
 )
-def create_brand_kit(
+async def create_brand_kit(
     payload: BrandKitCreateRequest,
     service: BrandService = Depends(get_brand_service),
 ) -> BrandKitResponse:
-    kit = service.create_brand_kit(payload.to_command())
+    kit = await service.create_brand_kit(payload.to_command())
     return BrandKitResponse.model_validate(kit)
 
 
@@ -51,10 +51,10 @@ def create_brand_kit(
     status_code=status.HTTP_200_OK,
     summary="Update Brand Kit voice, personas, or value props",
 )
-def update_brand_kit(
+async def update_brand_kit(
     brand_kit_id: UUID,
     payload: BrandKitUpdateRequest,
     service: BrandService = Depends(get_brand_service),
 ) -> BrandKitResponse:
-    kit = service.update_brand_kit(payload.to_command(brand_kit_id))
+    kit = await service.update_brand_kit(payload.to_command(brand_kit_id))
     return BrandKitResponse.model_validate(kit)

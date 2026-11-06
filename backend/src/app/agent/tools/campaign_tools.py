@@ -5,29 +5,32 @@ from uuid import UUID
 from pydantic_ai import RunContext
 
 from app.agent.llm import AgentDeps, marketing_agent
-from app.common.enums import CampaignStatus, PostContentType, PostStatus
+from app.common.enums import ActivityType, CampaignStatus, PostContentType, PostStatus
 from app.common.exceptions import AppError
 from app.modules.accounts.service import AccountService
 from app.modules.campaigns.commands import (
     CreateCampaignCommand,
     QueuePostCommand,
+    RecordPostDeliveryCommand,
+    RecordPostFailureCommand,
     UpdatePostCommand,
 )
 from app.modules.campaigns.service import CampaignService
+from app.modules.history.commands import LogActivityCommand
 from app.modules.history.service import HistoryService
+from app.platforms.registry import PlatformRegistry
 
 
 @marketing_agent.tool
-def draft_campaign(
+async def draft_campaign(
     ctx: RunContext[AgentDeps],
     name: str,
     description: str | None = None,
     target_audience: str | None = None,
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Creates a new marketing campaign to group and organize scheduled posts."""
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = CampaignService(db)
             cmd = CreateCampaignCommand(
                 name=name,
@@ -36,7 +39,7 @@ def draft_campaign(
                 status=CampaignStatus.ACTIVE,
                 tags=tags or [],
             )
-            campaign = service.create_campaign(cmd)
+            campaign = await service.create_campaign(cmd)
             return {
                 "id": str(campaign.id),
                 "name": campaign.name,
@@ -48,7 +51,7 @@ def draft_campaign(
 
 
 @marketing_agent.tool
-def queue_social_post(
+async def queue_social_post(
     ctx: RunContext[AgentDeps],
     campaign_id: str,
     account_id: str,
@@ -56,16 +59,12 @@ def queue_social_post(
     scheduled_at_iso: str | None = None,
     media_urls: list[str] | None = None,
 ) -> dict[str, Any]:
-    """
-    Creates a new post. If scheduled_at_iso is omitted, saves as a draft.
-    To schedule or publish an EXISTING post, use schedule_existing_post or publish_post_now.
-    """
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = CampaignService(db)
             account_service = AccountService(db)
 
-            account_service.get_by_id_or_raise(UUID(account_id))
+            await account_service.get_by_id_or_raise(UUID(account_id))
             scheduled_dt: datetime | None = None
             post_status = PostStatus.DRAFT
 
@@ -82,7 +81,7 @@ def queue_social_post(
                 scheduled_at=scheduled_dt,
                 status=post_status,
             )
-            post = service.queue_post(cmd)
+            post = await service.queue_post(cmd)
 
             return {
                 "id": str(post.id),
@@ -97,18 +96,14 @@ def queue_social_post(
 
 
 @marketing_agent.tool
-def schedule_existing_post(
+async def schedule_existing_post(
     ctx: RunContext[AgentDeps],
     post_id: str,
     scheduled_at_iso: str | None = None,
     media_urls: list[str] | None = None,
 ) -> dict[str, Any]:
-    """
-    Schedules an existing draft post by setting its publish time and status to 'scheduled'.
-    Can also attach or update media_urls (image or video URLs).
-    """
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = CampaignService(db)
             post_uuid = UUID(post_id)
 
@@ -118,7 +113,7 @@ def schedule_existing_post(
             else:
                 scheduled_dt = datetime.now(UTC) + timedelta(minutes=5)
 
-            updated = service.update_post(
+            updated = await service.update_post(
                 UpdatePostCommand(
                     post_id=post_uuid,
                     scheduled_at=scheduled_dt,
@@ -143,54 +138,93 @@ async def publish_post_now(
     post_id: str,
 ) -> dict[str, Any]:
     """
-    Immediately dispatches and publishes a post to its platform (Instagram, Twitter, etc.).
-    Use this when the user says 'post it now', 'publish now', or 'post to insta'.
+    Hardened publishing: Checks quotas and marks publishing in quick transaction,
+    executes browser adapter outside the DB lock, and saves results in fresh scope.
     """
     try:
-        from app.automation.workers.post_dispatcher import _dispatch_single_post
+        post_uuid = UUID(post_id)
 
-        with ctx.deps.db_session_scope() as db:
+        # 1. Quick check & mark as publishing
+        async with ctx.deps.db_session_scope() as db:
             service = CampaignService(db)
-            account_service = AccountService(db)
-            history_service = HistoryService(db)
-            post = service.get_post_by_id_or_raise(UUID(post_id))
+            post = await service.get_post_by_id_or_raise(post_uuid)
+            account = post.account
 
-            success = await _dispatch_single_post(
-                db=db,
-                post=post,
-                campaign_service=service,
-                account_service=account_service,
-                history_service=history_service,
-            )
-
-            if success:
+            if not account.can_post_today():
                 return {
                     "id": str(post.id),
-                    "status": "published",
-                    "platform_post_id": post.platform_post_id,
-                    "platform_post_url": post.platform_post_url,
+                    "status": "failed",
+                    "error": f"Account @{account.handle} cannot post today (quota or cooldown)",
                 }
+
+            post.mark_as_publishing()
+            await db.commit()
+
+            # Read strings into memory before leaving session
+            content = post.content
+            media_paths = list(post.media_urls) if post.media_urls else None
+            account_handle = account.handle
+            account_id = account.id
+
+        # 2. Browser dispatch executed outside the database lock
+        adapter = PlatformRegistry.get_adapter(account)
+        try:
+            result = await adapter.publish_post(content=content, media_paths=media_paths)
+        finally:
+            await adapter.close()
+
+        # 3. Finalize in database
+        async with ctx.deps.db_session_scope() as db:
+            service = CampaignService(db)
+            acc_service = AccountService(db)
+            hist_service = HistoryService(db)
+
+            published = await service.record_delivery(
+                RecordPostDeliveryCommand(
+                    post_id=post_uuid,
+                    platform_post_id=result.platform_post_id,
+                    platform_post_url=result.platform_post_url,
+                )
+            )
+            await acc_service.record_post_activity(account_id)
+
+            await hist_service.log_activity(
+                LogActivityCommand(
+                    activity_type=ActivityType.POST_PUBLISHED,
+                    title="Post published by Copilot",
+                    description=f"Dispatched to @{account_handle}",
+                    entity_type="post",
+                    entity_id=post_uuid,
+                    actor="agent_copilot",
+                )
+            )
+
             return {
-                "id": str(post.id),
-                "status": post.status.value,
-                "error": post.last_error_message or "Failed to dispatch post",
+                "id": str(published.id),
+                "status": "published",
+                "platform_post_id": published.platform_post_id,
+                "platform_post_url": published.platform_post_url,
             }
-    except (AppError, ValueError) as exc:
-        return {"error": str(exc)}
+
+    except Exception as exc:
+        try:
+            async with ctx.deps.db_session_scope() as db:
+                service = CampaignService(db)
+                await service.record_failure(
+                    RecordPostFailureCommand(post_id=post_uuid, error_message=str(exc))
+                )
+        except Exception:
+            pass
+        return {"error": f"Failed to publish post: {exc}"}
 
 
 @marketing_agent.tool
-def list_pending_posts(
+async def list_pending_posts(
     ctx: RunContext[AgentDeps],
     status: str | None = None,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """
-    Lists posts in the workspace. Supports filtering by status:
-    'draft', 'scheduled', 'published', or 'failed'.
-    If status is omitted, returns pending posts (drafts & scheduled).
-    """
-    with ctx.deps.db_session_scope() as db:
+    async with ctx.deps.db_session_scope() as db:
         service = CampaignService(db)
         target_status: PostStatus | None = None
         statuses: list[PostStatus] | None = None
@@ -204,7 +238,7 @@ def list_pending_posts(
         else:
             statuses = [PostStatus.DRAFT, PostStatus.SCHEDULED]
 
-        posts = service.list_posts(
+        posts = await service.list_posts(
             status=target_status,
             statuses=statuses,
             limit=limit,

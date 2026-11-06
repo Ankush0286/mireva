@@ -16,7 +16,9 @@ from app.agent.tools.outreach_tools import (
     add_lead_to_crm,
     dispatch_dm_now,
     list_crm_leads,
+    read_inbox_with_browser_agent,
     review_staged_dm,
+    scout_creators_with_browser_agent,
     stage_cold_outreach_dm,
 )
 from app.agent.tools.trigger_tools import (
@@ -42,6 +44,8 @@ __all__ = [
     "stage_cold_outreach_dm",
     "review_staged_dm",
     "dispatch_dm_now",
+    "read_inbox_with_browser_agent",
+    "scout_creators_with_browser_agent",
     "list_marketing_data_sources",
     "get_search_console_opportunities",
     "get_competitor_keyword_gaps",

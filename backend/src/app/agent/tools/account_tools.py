@@ -9,7 +9,7 @@ from app.modules.accounts.service import AccountService
 
 
 @marketing_agent.tool
-def get_connected_accounts(
+async def get_connected_accounts(
     ctx: RunContext[AgentDeps],
     active_only: bool = True,
 ) -> list[dict[str, Any]]:
@@ -17,9 +17,9 @@ def get_connected_accounts(
     Fetches all connected social media accounts (Twitter, Instagram, etc.)
     including their daily post and DM limits, current usage counts, and status.
     """
-    with ctx.deps.db_session_scope() as db:
+    async with ctx.deps.db_session_scope() as db:
         service = AccountService(db)
-        accounts = service.list_accounts(active_only=active_only)
+        accounts = await service.list_accounts(active_only=active_only)
 
         return [
             {
@@ -42,7 +42,7 @@ def get_connected_accounts(
 
 
 @marketing_agent.tool
-def check_account_health(
+async def check_account_health(
     ctx: RunContext[AgentDeps],
     account_id: str,
 ) -> dict[str, Any]:
@@ -51,9 +51,9 @@ def check_account_health(
     and remaining daily capacity for a specific connected account UUID.
     """
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = AccountService(db)
-            account = service.get_by_id_or_raise(UUID(account_id))
+            account = await service.get_by_id_or_raise(UUID(account_id))
             return {
                 "id": str(account.id),
                 "handle": account.handle,

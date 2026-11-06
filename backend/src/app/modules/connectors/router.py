@@ -2,7 +2,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import ConnectorType
 from app.db.dependencies import get_db_session
@@ -17,7 +17,7 @@ from app.modules.connectors.service import ConnectorService
 router = APIRouter()
 
 
-def get_connector_service(db: Session = Depends(get_db_session)) -> ConnectorService:
+def get_connector_service(db: AsyncSession = Depends(get_db_session)) -> ConnectorService:
     """Dependency injection factory for ConnectorService."""
     return ConnectorService(db)
 
@@ -28,11 +28,11 @@ def get_connector_service(db: Session = Depends(get_db_session)) -> ConnectorSer
     status_code=status.HTTP_201_CREATED,
     summary="Register a new external data source (GSC, Ahrefs, GA4)",
 )
-def create_connector(
+async def create_connector(
     payload: ConnectorCreateRequest,
     service: ConnectorService = Depends(get_connector_service),
 ) -> ConnectorResponse:
-    connector = service.create_connector(payload.to_command())
+    connector = await service.create_connector(payload.to_command())
     return ConnectorResponse.model_validate(connector)
 
 
@@ -42,12 +42,12 @@ def create_connector(
     status_code=status.HTTP_200_OK,
     summary="List all registered data source connectors",
 )
-def list_connectors(
+async def list_connectors(
     connector_type: ConnectorType | None = Query(default=None, description="Filter by provider type"),
     active_only: bool = Query(default=False, description="Filter active sources only"),
     service: ConnectorService = Depends(get_connector_service),
 ) -> list[ConnectorResponse]:
-    connectors = service.list_connectors(connector_type=connector_type, active_only=active_only)
+    connectors = await service.list_connectors(connector_type=connector_type, active_only=active_only)
     return [ConnectorResponse.model_validate(c) for c in connectors]
 
 
@@ -57,11 +57,11 @@ def list_connectors(
     status_code=status.HTTP_200_OK,
     summary="Get data connector metadata by ID",
 )
-def get_connector(
+async def get_connector(
     connector_id: UUID,
     service: ConnectorService = Depends(get_connector_service),
 ) -> ConnectorResponse:
-    connector = service.get_by_id_or_raise(connector_id)
+    connector = await service.get_by_id_or_raise(connector_id)
     return ConnectorResponse.model_validate(connector)
 
 
@@ -71,12 +71,12 @@ def get_connector(
     status_code=status.HTTP_200_OK,
     summary="Update connector configuration or rotate credentials",
 )
-def update_connector(
+async def update_connector(
     connector_id: UUID,
     payload: ConnectorUpdateRequest,
     service: ConnectorService = Depends(get_connector_service),
 ) -> ConnectorResponse:
-    connector = service.update_connector(payload.to_command(connector_id))
+    connector = await service.update_connector(payload.to_command(connector_id))
     return ConnectorResponse.model_validate(connector)
 
 
@@ -85,11 +85,11 @@ def update_connector(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Disconnect and delete a data connector",
 )
-def delete_connector(
+async def delete_connector(
     connector_id: UUID,
     service: ConnectorService = Depends(get_connector_service),
 ) -> None:
-    service.delete_connector(connector_id)
+    await service.delete_connector(connector_id)
 
 
 @router.post(

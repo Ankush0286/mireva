@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.loop import run_agent_turn, stream_agent_turn
 from app.core.agent_config import agent_settings
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def get_copilot_service(db: Session = Depends(get_db_session)) -> CopilotService:
+def get_copilot_service(db: AsyncSession = Depends(get_db_session)) -> CopilotService:
     """Dependency injection factory for CopilotService."""
     return CopilotService(db)
 
@@ -52,7 +52,7 @@ class AgentChatRequest(BaseModel):
     status_code=status.HTTP_200_OK,
     summary="List configured AI models for the Copilot selector",
 )
-def list_available_models() -> list[dict[str, Any]]:
+async def list_available_models() -> list[dict[str, Any]]:
     configured_models = getattr(agent_settings, "AVAILABLE_MODELS", None)
     if configured_models:
         return [
@@ -80,11 +80,11 @@ def list_available_models() -> list[dict[str, Any]]:
     status_code=status.HTTP_201_CREATED,
     summary="Create a new AI conversation thread",
 )
-def create_session(
+async def create_session(
     payload: ChatSessionCreateRequest,
     service: CopilotService = Depends(get_copilot_service),
 ) -> ChatSessionResponse:
-    session = service.create_session(payload.to_command())
+    session = await service.create_session(payload.to_command())
     return ChatSessionResponse.model_validate(session)
 
 
@@ -94,13 +94,13 @@ def create_session(
     status_code=status.HTTP_200_OK,
     summary="List all AI conversation sessions",
 )
-def list_sessions(
+async def list_sessions(
     include_archived: bool = Query(default=False, description="Include archived sessions"),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     service: CopilotService = Depends(get_copilot_service),
 ) -> list[ChatSessionResponse]:
-    sessions = service.list_sessions(include_archived=include_archived, limit=limit, offset=offset)
+    sessions = await service.list_sessions(include_archived=include_archived, limit=limit, offset=offset)
     return [ChatSessionResponse.model_validate(session) for session in sessions]
 
 
@@ -110,11 +110,11 @@ def list_sessions(
     status_code=status.HTTP_200_OK,
     summary="Get conversation session with full message history",
 )
-def get_session(
+async def get_session(
     session_id: UUID,
     service: CopilotService = Depends(get_copilot_service),
 ) -> ChatSessionDetailResponse:
-    session = service.get_session_by_id_or_raise(session_id)
+    session = await service.get_session_by_id_or_raise(session_id)
     return ChatSessionDetailResponse.model_validate(session)
 
 
@@ -124,12 +124,12 @@ def get_session(
     status_code=status.HTTP_200_OK,
     summary="Rename or archive a chat thread",
 )
-def update_session(
+async def update_session(
     session_id: UUID,
     payload: ChatSessionUpdateRequest,
     service: CopilotService = Depends(get_copilot_service),
 ) -> ChatSessionResponse:
-    session = service.update_session(payload.to_command(session_id))
+    session = await service.update_session(payload.to_command(session_id))
     return ChatSessionResponse.model_validate(session)
 
 
@@ -138,11 +138,11 @@ def update_session(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a chat thread and all message traces",
 )
-def delete_session(
+async def delete_session(
     session_id: UUID,
     service: CopilotService = Depends(get_copilot_service),
 ) -> None:
-    service.delete_session(session_id)
+    await service.delete_session(session_id)
 
 
 # =============================================================================
@@ -156,12 +156,12 @@ def delete_session(
     status_code=status.HTTP_201_CREATED,
     summary="Append a user or assistant message to a conversation thread",
 )
-def add_message(
+async def add_message(
     session_id: UUID,
     payload: ChatMessageCreateRequest,
     service: CopilotService = Depends(get_copilot_service),
 ) -> ChatMessageResponse:
-    message = service.add_message(payload.to_command(session_id))
+    message = await service.add_message(payload.to_command(session_id))
     return ChatMessageResponse.model_validate(message)
 
 
@@ -171,13 +171,13 @@ def add_message(
     status_code=status.HTTP_200_OK,
     summary="List all messages in a conversation thread with pagination",
 )
-def list_messages(
+async def list_messages(
     session_id: UUID,
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     service: CopilotService = Depends(get_copilot_service),
 ) -> list[ChatMessageResponse]:
-    messages = service.list_messages(session_id=session_id, limit=limit, offset=offset)
+    messages = await service.list_messages(session_id=session_id, limit=limit, offset=offset)
     return [ChatMessageResponse.model_validate(msg) for msg in messages]
 
 
@@ -187,11 +187,11 @@ def list_messages(
     status_code=status.HTTP_200_OK,
     summary="List all tool execution traces triggered during a conversation",
 )
-def list_tool_executions(
+async def list_tool_executions(
     session_id: UUID,
     service: CopilotService = Depends(get_copilot_service),
 ) -> list[ToolExecutionLogResponse]:
-    tool_logs = service.list_tool_executions(session_id=session_id)
+    tool_logs = await service.list_tool_executions(session_id=session_id)
     return [ToolExecutionLogResponse.model_validate(trace) for trace in tool_logs]
 
 
@@ -209,7 +209,7 @@ def list_tool_executions(
 async def chat_with_agent(
     session_id: UUID,
     payload: AgentChatRequest,
-    db: Session = Depends(get_db_session),
+    db: AsyncSession = Depends(get_db_session),
 ) -> ChatMessageResponse:
     assistant_msg = await run_agent_turn(
         db=db,
@@ -228,7 +228,7 @@ async def chat_with_agent(
 async def stream_chat_with_agent(
     session_id: UUID,
     payload: AgentChatRequest,
-    db: Session = Depends(get_db_session),
+    db: AsyncSession = Depends(get_db_session),
 ) -> StreamingResponse:
     token_generator = stream_agent_turn(
         db=db,
@@ -242,7 +242,6 @@ async def stream_chat_with_agent(
         try:
             async for item in token_generator:
                 yield f"data: {json.dumps(item)}\n\n"
-                # Force Uvicorn event loop to flush SSE packet immediately over the socket
                 await asyncio.sleep(0)
             yield "data: [DONE]\n\n"
         except Exception as exc:

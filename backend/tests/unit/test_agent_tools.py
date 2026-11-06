@@ -1,11 +1,12 @@
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.llm import AgentDeps
 from app.agent.tools.account_tools import (
@@ -46,10 +47,20 @@ from app.modules.connectors.schemas import MetricOpportunityItem
 from app.modules.connectors.service import ConnectorService
 
 
-def _make_run_context(db_session: Session) -> Any:
+def _make_run_context(db_session: AsyncSession) -> Any:
     """Constructs a lightweight RunContext mock carrying AgentDeps."""
     ctx = MagicMock()
-    ctx.deps = AgentDeps(db=db_session)
+    # Explicitly instantiate the lock here
+    lock = asyncio.Lock()
+    ctx.deps = AgentDeps(db=db_session, _async_lock=lock)
+
+    @asynccontextmanager
+    async def mock_scope():
+        # Actually use the lock to safely serialize the concurrent Thread/Task access!
+        async with lock:
+            yield db_session
+
+    ctx.deps.db_session_scope = mock_scope
     return ctx
 
 
@@ -58,10 +69,11 @@ def _make_run_context(db_session: Session) -> Any:
 # =============================================================================
 
 
-def test_account_tools_execution_and_error_handling(db_session: Session):
+@pytest.mark.anyio
+async def test_account_tools_execution_and_error_handling(db_session: AsyncSession):
     ctx = _make_run_context(db_session)
     acc_service = AccountService(db_session)
-    account = acc_service.create_account(
+    account = await acc_service.create_account(
         CreateAccountCommand(
             platform=PlatformType.TWITTER,
             handle="agent_growth_bot",
@@ -71,22 +83,22 @@ def test_account_tools_execution_and_error_handling(db_session: Session):
     )
 
     # 1. List connected accounts
-    accounts_list = get_connected_accounts(ctx, active_only=True)
+    accounts_list = await get_connected_accounts(ctx, active_only=True)
     assert len(accounts_list) == 1
     assert accounts_list[0]["handle"] == "agent_growth_bot"
     assert accounts_list[0]["can_post_today"] is True
 
     # 2. Check specific account health
-    health = check_account_health(ctx, account_id=str(account.id))
+    health = await check_account_health(ctx, account_id=str(account.id))
     assert health["handle"] == "agent_growth_bot"
     assert health["remaining_posts_today"] == 12
     assert health["remaining_dms_today"] == 20
 
     # 3. Graceful error recovery on malformed or nonexistent UUID
-    bad_uuid_res = check_account_health(ctx, account_id="not-a-valid-uuid")
+    bad_uuid_res = await check_account_health(ctx, account_id="not-a-valid-uuid")
     assert "error" in bad_uuid_res
 
-    missing_res = check_account_health(ctx, account_id=str(uuid4()))
+    missing_res = await check_account_health(ctx, account_id=str(uuid4()))
     assert "error" in missing_res
 
 
@@ -95,15 +107,16 @@ def test_account_tools_execution_and_error_handling(db_session: Session):
 # =============================================================================
 
 
-def test_campaign_tools_execution_and_error_handling(db_session: Session):
+@pytest.mark.anyio
+async def test_campaign_tools_execution_and_error_handling(db_session: AsyncSession):
     ctx = _make_run_context(db_session)
     acc_service = AccountService(db_session)
-    account = acc_service.create_account(
+    account = await acc_service.create_account(
         CreateAccountCommand(platform=PlatformType.TWITTER, handle="camp_tool_bot")
     )
 
     # 1. Draft a campaign
-    camp_res = draft_campaign(
+    camp_res = await draft_campaign(
         ctx,
         name="AI Launch Campaign",
         description="Promoting new autonomous agent features",
@@ -116,7 +129,7 @@ def test_campaign_tools_execution_and_error_handling(db_session: Session):
     campaign_id = camp_res["id"]
 
     # 2. Queue a draft post, then schedule it via schedule_existing_post
-    draft_post = queue_social_post(
+    draft_post = await queue_social_post(
         ctx,
         campaign_id=campaign_id,
         account_id=str(account.id),
@@ -124,7 +137,7 @@ def test_campaign_tools_execution_and_error_handling(db_session: Session):
     )
     assert draft_post["status"] == "draft"
 
-    scheduled_res = schedule_existing_post(
+    scheduled_res = await schedule_existing_post(
         ctx,
         post_id=draft_post["id"],
         scheduled_at_iso=(datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
@@ -132,12 +145,12 @@ def test_campaign_tools_execution_and_error_handling(db_session: Session):
     assert scheduled_res["status"] == "scheduled"
 
     # 3. List pending posts
-    pending = list_pending_posts(ctx, limit=5)
+    pending = await list_pending_posts(ctx, limit=5)
     assert len(pending) == 1
     assert pending[0]["id"] == draft_post["id"]
 
     # 4. Graceful error recovery when queuing on nonexistent campaign
-    err_res = queue_social_post(
+    err_res = await queue_social_post(
         ctx,
         campaign_id=str(uuid4()),
         account_id=str(account.id),
@@ -151,15 +164,16 @@ def test_campaign_tools_execution_and_error_handling(db_session: Session):
 # =============================================================================
 
 
-def test_trigger_tools_execution_and_error_handling(db_session: Session):
+@pytest.mark.anyio
+async def test_trigger_tools_execution_and_error_handling(db_session: AsyncSession):
     ctx = _make_run_context(db_session)
     acc_service = AccountService(db_session)
-    account = acc_service.create_account(
+    account = await acc_service.create_account(
         CreateAccountCommand(platform=PlatformType.TWITTER, handle="trigger_tool_bot")
     )
 
     # 1. Add competitor to watch
-    watch_res = add_competitor_to_watch(
+    watch_res = await add_competitor_to_watch(
         ctx,
         platform="twitter",
         handle="@competitor_hq",
@@ -169,7 +183,7 @@ def test_trigger_tools_execution_and_error_handling(db_session: Session):
     assert watch_res["platform"] == "twitter"
 
     # 2. Create keyword trigger rule
-    rule_res = create_keyword_trigger_rule(
+    rule_res = await create_keyword_trigger_rule(
         ctx,
         name="Alternative Finder",
         platform="twitter",
@@ -181,7 +195,7 @@ def test_trigger_tools_execution_and_error_handling(db_session: Session):
     assert rule_res["name"] == "Alternative Finder"
 
     # 3. Graceful error recovery on nonexistent match review
-    review_err = review_intercepted_match(
+    review_err = await review_intercepted_match(
         ctx,
         match_id=str(uuid4()),
         approve=True,
@@ -195,15 +209,15 @@ def test_trigger_tools_execution_and_error_handling(db_session: Session):
 
 
 @pytest.mark.anyio
-async def test_outreach_tools_execution_and_error_handling(db_session: Session):
+async def test_outreach_tools_execution_and_error_handling(db_session: AsyncSession):
     ctx = _make_run_context(db_session)
     acc_service = AccountService(db_session)
-    account = acc_service.create_account(
+    account = await acc_service.create_account(
         CreateAccountCommand(platform=PlatformType.TWITTER, handle="outreach_tool_bot")
     )
 
     # 1. Add lead to CRM
-    lead_res = add_lead_to_crm(
+    lead_res = await add_lead_to_crm(
         ctx,
         platform="twitter",
         handle="@tech_creator",
@@ -218,12 +232,12 @@ async def test_outreach_tools_execution_and_error_handling(db_session: Session):
     lead_id = lead_res["id"]
 
     # 2. List CRM leads
-    leads_list = list_crm_leads(ctx, platform="twitter")
+    leads_list = await list_crm_leads(ctx, platform="twitter")
     assert len(leads_list) == 1
     assert leads_list[0]["id"] == lead_id
 
     # 3. Stage cold outreach DM
-    stage_res = stage_cold_outreach_dm(
+    stage_res = await stage_cold_outreach_dm(
         ctx,
         lead_id=lead_id,
         account_id=str(account.id),
@@ -234,7 +248,7 @@ async def test_outreach_tools_execution_and_error_handling(db_session: Session):
     message_id = stage_res["id"]
 
     # 4. Review and approve staged DM
-    review_res = review_staged_dm(
+    review_res = await review_staged_dm(
         ctx,
         message_id=message_id,
         approve=True,
@@ -248,13 +262,15 @@ async def test_outreach_tools_execution_and_error_handling(db_session: Session):
     mock_adapter.send_dm = AsyncMock(return_value="thread_xyz_999")
     mock_adapter.close = AsyncMock()
 
-    with patch("app.agent.tools.outreach_tools.PlatformRegistry.get_adapter", return_value=mock_adapter):
+    with patch(
+        "app.agent.tools.outreach_tools.PlatformRegistry.get_adapter", return_value=mock_adapter
+    ):
         dispatch_res = await dispatch_dm_now(ctx, message_id=message_id)
         assert dispatch_res["status"] == "dispatched"
         assert dispatch_res["platform_thread_id"] == "thread_xyz_999"
 
     # 6. Graceful error recovery + existing ID return on duplicate lead import
-    dup_err = add_lead_to_crm(
+    dup_err = await add_lead_to_crm(
         ctx,
         platform="twitter",
         handle="tech_creator",
@@ -268,18 +284,19 @@ async def test_outreach_tools_execution_and_error_handling(db_session: Session):
 # =============================================================================
 
 
-def test_brand_tools_execution(db_session: Session):
+@pytest.mark.anyio
+async def test_brand_tools_execution(db_session: AsyncSession):
     ctx = _make_run_context(db_session)
     brand_service = BrandService(db_session)
 
     # 1. Query on unconfigured DB returns blank default kit
-    empty_knowledge = get_brand_knowledge(ctx)
+    empty_knowledge = await get_brand_knowledge(ctx)
     assert empty_knowledge["brand_name"] == ""
     assert empty_knowledge["tone_traits"] == []
 
     # 2. Populate primary brand kit and verify tool returns configured ground truth
-    primary_kit = brand_service.get_or_create_default_primary()
-    brand_service.update_brand_kit(
+    primary_kit = await brand_service.get_or_create_default_primary()
+    await brand_service.update_brand_kit(
         UpdateBrandKitCommand(
             brand_kit_id=primary_kit.id,
             name="Acme Growth",
@@ -292,7 +309,7 @@ def test_brand_tools_execution(db_session: Session):
         )
     )
 
-    knowledge = get_brand_knowledge(ctx)
+    knowledge = await get_brand_knowledge(ctx)
     assert knowledge["brand_name"] == "Acme Growth"
     assert "https://acme.ai" in knowledge["website_url"]
     assert "punchy" in knowledge["tone_traits"]
@@ -300,13 +317,13 @@ def test_brand_tools_execution(db_session: Session):
     assert len(knowledge["target_personas"]) == 1
 
     # 3. Query specific section: tone & voice
-    tone_sec = get_brand_knowledge(ctx, section="tone")
+    tone_sec = await get_brand_knowledge(ctx, section="tone")
     assert "tone_traits" in tone_sec
     assert "banned_words_never_use" in tone_sec
     assert "target_personas" not in tone_sec
 
     # 4. Query specific section: personas
-    personas_sec = get_brand_knowledge(ctx, section="personas")
+    personas_sec = await get_brand_knowledge(ctx, section="personas")
     assert "target_personas" in personas_sec
     assert "tone_traits" not in personas_sec
 
@@ -317,7 +334,7 @@ def test_brand_tools_execution(db_session: Session):
 
 
 @pytest.mark.anyio
-async def test_connector_tools_execution_and_warnings(db_session: Session):
+async def test_connector_tools_execution_and_warnings(db_session: AsyncSession):
     ctx = _make_run_context(db_session)
     conn_service = ConnectorService(db_session)
 
@@ -333,7 +350,7 @@ async def test_connector_tools_execution_and_warnings(db_session: Session):
     assert "warning" in no_ahrefs[0]
 
     # 3. Register GSC connector and query opportunities via mock
-    conn_service.create_connector(
+    await conn_service.create_connector(
         CreateConnectorCommand(
             name="GSC Production",
             connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE,
@@ -372,40 +389,44 @@ async def test_connector_tools_execution_and_warnings(db_session: Session):
 
 
 # =============================================================================
-# Parallel Tool Execution Thread-Safety Test
+# Parallel Tool Execution Async Safety Test
 # =============================================================================
 
 
-def test_parallel_tool_calls_thread_safety(db_session: Session):
+@pytest.mark.anyio
+async def test_parallel_tool_calls_async_safety(db_session: AsyncSession):
     """
-    Verifies that concurrent tool executions across multiple worker threads sharing
-    the same AgentDeps(db=db_session) serialize cleanly via db_session_scope()
-    without raising SQLAlchemy 'prepared' state collisions.
+    Verifies that concurrent tool executions using asyncio.gather share
+    the same AgentDeps(db=db_session) and serialize cleanly via _async_lock
+    within db_session_scope(), avoiding asyncpg "transaction in progress" collisions.
     """
     ctx = _make_run_context(db_session)
+    acc_service = AccountService(db_session)
 
-    def _run_tool_1() -> Any:
-        return get_connected_accounts(ctx)
+    await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="parallel_tester")
+    )
 
-    def _run_tool_2() -> Any:
-        return get_brand_knowledge(ctx)
-
-    def _run_tool_3() -> Any:
-        return add_lead_to_crm(ctx, platform="instagram", handle="parallel_lead_1")
-
-    def _run_tool_4() -> Any:
-        return list_crm_leads(ctx)
-
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [
-            pool.submit(_run_tool_1),
-            pool.submit(_run_tool_2),
-            pool.submit(_run_tool_3),
-            pool.submit(_run_tool_4),
-        ]
-        results = [f.result() for f in futures]
+    # Launching multiple database-dependent tools concurrently
+    results = await asyncio.gather(
+        get_connected_accounts(ctx),
+        get_brand_knowledge(ctx),
+        add_lead_to_crm(ctx, platform="instagram", handle="parallel_lead_1"),
+        list_crm_leads(ctx),
+    )
 
     assert len(results) == 4
+
+    # 1. Accounts list
     assert isinstance(results[0], list)
+    assert results[0][0]["handle"] == "parallel_tester"
+
+    # 2. Brand knowledge
     assert "brand_name" in results[1]
+
+    # 3. CRM Lead Addition
     assert results[2]["handle"] == "parallel_lead_1"
+
+    # 4. CRM Lead List
+    assert isinstance(results[3], list)
+    assert len(results[3]) == 1

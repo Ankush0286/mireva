@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.common.enums import CampaignStatus, PostStatus
 from app.modules.accounts.exceptions import AccountNotFoundError
@@ -29,39 +31,37 @@ def _ensure_uuid(val: UUID | str) -> UUID:
 
 
 class CampaignService:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
     # =========================================================================
     # Campaign Queries & Mutations
     # =========================================================================
 
-    def get_campaign_by_id(self, campaign_id: UUID | str) -> Campaign | None:
-        """Fetch a single campaign with eager-loaded posts, returning None if not found."""
+    async def get_campaign_by_id(self, campaign_id: UUID | str) -> Campaign | None:
         target_id = _ensure_uuid(campaign_id)
-        return (
-            self.db.query(Campaign)
+        stmt = (
+            select(Campaign)
             .options(selectinload(Campaign.posts))
-            .filter(Campaign.id == target_id)
-            .first()
+            .where(Campaign.id == target_id)
         )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_campaign_by_id_or_raise(self, campaign_id: UUID | str) -> Campaign:
-        """Fetch a campaign by ID or raise CampaignNotFoundError."""
-        campaign = self.get_campaign_by_id(campaign_id)
+    async def get_campaign_by_id_or_raise(self, campaign_id: UUID | str) -> Campaign:
+        campaign = await self.get_campaign_by_id(campaign_id)
         if not campaign:
             raise CampaignNotFoundError(campaign_id)
         return campaign
 
-    def list_campaigns(self, status: CampaignStatus | None = None) -> list[Campaign]:
-        """List all campaigns, optionally filtering by lifecycle status."""
-        query = self.db.query(Campaign).order_by(Campaign.created_at.desc())
+    async def list_campaigns(self, status: CampaignStatus | None = None) -> list[Campaign]:
+        stmt = select(Campaign).order_by(Campaign.created_at.desc())
         if status is not None:
-            query = query.filter(Campaign.status == status)
-        return query.all()
+            stmt = stmt.where(Campaign.status == status)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
-    def create_campaign(self, cmd: CreateCampaignCommand) -> Campaign:
-        """Persist a new marketing campaign."""
+    async def create_campaign(self, cmd: CreateCampaignCommand) -> Campaign:
         campaign = Campaign(
             name=cmd.name,
             description=cmd.description,
@@ -73,13 +73,12 @@ class CampaignService:
             extra_metadata=cmd.extra_metadata,
         )
         self.db.add(campaign)
-        self.db.commit()
-        self.db.refresh(campaign)
+        await self.db.commit()
+        await self.db.refresh(campaign)
         return campaign
 
-    def update_campaign(self, cmd: UpdateCampaignCommand) -> Campaign:
-        """Update campaign metadata or status."""
-        campaign = self.get_campaign_by_id_or_raise(cmd.campaign_id)
+    async def update_campaign(self, cmd: UpdateCampaignCommand) -> Campaign:
+        campaign = await self.get_campaign_by_id_or_raise(cmd.campaign_id)
 
         if cmd.name is not None:
             campaign.name = cmd.name
@@ -98,89 +97,83 @@ class CampaignService:
         if cmd.extra_metadata is not None:
             campaign.extra_metadata = cmd.extra_metadata
 
-        self.db.commit()
-        self.db.refresh(campaign)
+        await self.db.commit()
+        await self.db.refresh(campaign)
         return campaign
 
-    def delete_campaign(self, campaign_id: UUID | str) -> None:
-        """Remove a campaign and cascade delete its scheduled posts."""
-        campaign = self.get_campaign_by_id_or_raise(campaign_id)
-        self.db.delete(campaign)
-        self.db.commit()
+    async def delete_campaign(self, campaign_id: UUID | str) -> None:
+        campaign = await self.get_campaign_by_id_or_raise(campaign_id)
+        await self.db.delete(campaign)
+        await self.db.commit()
 
     # =========================================================================
     # Scheduled Post Queries & Lifecycle Mutations
     # =========================================================================
 
-    def get_post_by_id(self, post_id: UUID | str) -> ScheduledPost | None:
-        """Fetch a single scheduled post, returning None if not found."""
+    async def get_post_by_id(self, post_id: UUID | str) -> ScheduledPost | None:
         target_id = _ensure_uuid(post_id)
-        return (
-            self.db.query(ScheduledPost)
-            .filter(ScheduledPost.id == target_id)
-            .first()
+        stmt = (
+            select(ScheduledPost)
+            .options(
+                selectinload(ScheduledPost.campaign),
+                selectinload(ScheduledPost.account),
+            )
+            .where(ScheduledPost.id == target_id)
         )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
-    def get_post_by_id_or_raise(self, post_id: UUID | str) -> ScheduledPost:
-        """Fetch a single post or raise PostNotFoundError."""
-        post = self.get_post_by_id(post_id)
+    async def get_post_by_id_or_raise(self, post_id: UUID | str) -> ScheduledPost:
+        post = await self.get_post_by_id(post_id)
         if not post:
             raise PostNotFoundError(post_id)
         return post
 
-    def list_posts_by_campaign(
+    async def list_posts_by_campaign(
         self, campaign_id: UUID | str, status: PostStatus | None = None
     ) -> list[ScheduledPost]:
-        """List all posts linked to a specific campaign."""
         target_id = _ensure_uuid(campaign_id)
-        self.get_campaign_by_id_or_raise(target_id)
+        await self.get_campaign_by_id_or_raise(target_id)
 
-        query = (
-            self.db.query(ScheduledPost)
-            .filter(ScheduledPost.campaign_id == target_id)
+        stmt = (
+            select(ScheduledPost)
+            .options(selectinload(ScheduledPost.account))
+            .where(ScheduledPost.campaign_id == target_id)
             .order_by(ScheduledPost.scheduled_at.asc(), ScheduledPost.created_at.asc())
         )
         if status is not None:
-            query = query.filter(ScheduledPost.status == status)
-        return query.all()
+            stmt = stmt.where(ScheduledPost.status == status)
 
-    def get_due_posts(self, limit: int = 50) -> list[ScheduledPost]:
-        """
-        Poll query utilized by the background post dispatcher worker.
-        Fetches pending posts scheduled on or before the current timestamp.
-        """
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_due_posts(self, limit: int = 50) -> list[ScheduledPost]:
         now = datetime.now(UTC)
-        return (
-            self.db.query(ScheduledPost)
-            .filter(
+        stmt = (
+            select(ScheduledPost)
+            .options(selectinload(ScheduledPost.account))
+            .where(
                 ScheduledPost.status == PostStatus.SCHEDULED,
                 ScheduledPost.scheduled_at <= now,
             )
             .order_by(ScheduledPost.scheduled_at.asc())
             .limit(limit)
-            .all()
         )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
-    def queue_post(self, cmd: QueuePostCommand) -> ScheduledPost:
-        """
-        Stages or schedules an outbound post after validating campaign
-        state, date boundaries, and account existence.
-        """
-        campaign = self.get_campaign_by_id_or_raise(cmd.campaign_id)
+    async def queue_post(self, cmd: QueuePostCommand) -> ScheduledPost:
+        campaign = await self.get_campaign_by_id_or_raise(cmd.campaign_id)
 
         if campaign.status in (CampaignStatus.ARCHIVED, CampaignStatus.COMPLETED):
             raise CampaignInactiveError(campaign.id, campaign.status.value)
 
-        # Verify connected account exists
-        account = (
-            self.db.query(ConnectedAccount)
-            .filter(ConnectedAccount.id == cmd.account_id)
-            .first()
-        )
+        acc_stmt = select(ConnectedAccount).where(ConnectedAccount.id == cmd.account_id)
+        acc_result = await self.db.execute(acc_stmt)
+        account = acc_result.scalars().first()
         if not account:
             raise AccountNotFoundError(cmd.account_id)
 
-        # Validate schedule lies within campaign boundaries if defined
         if cmd.scheduled_at:
             scheduled_utc = (
                 cmd.scheduled_at.replace(tzinfo=UTC)
@@ -211,23 +204,20 @@ class CampaignService:
             extra_metadata=cmd.extra_metadata,
         )
         self.db.add(post)
-        self.db.commit()
-        self.db.refresh(post)
+        await self.db.commit()
+        await self.db.refresh(post)
         return post
 
-    def update_post(self, cmd: UpdatePostCommand) -> ScheduledPost:
-        """Updates a post copy, media, or schedule before dispatch."""
-        post = self.get_post_by_id_or_raise(cmd.post_id)
+    async def update_post(self, cmd: UpdatePostCommand) -> ScheduledPost:
+        post = await self.get_post_by_id_or_raise(cmd.post_id)
 
         if post.status == PostStatus.PUBLISHED:
             raise PostAlreadyPublishedError(post.id)
 
         if cmd.account_id is not None:
-            account = (
-                self.db.query(ConnectedAccount)
-                .filter(ConnectedAccount.id == cmd.account_id)
-                .first()
-            )
+            acc_stmt = select(ConnectedAccount).where(ConnectedAccount.id == cmd.account_id)
+            acc_res = await self.db.execute(acc_stmt)
+            account = acc_res.scalars().first()
             if not account:
                 raise AccountNotFoundError(cmd.account_id)
             post.account_id = cmd.account_id
@@ -245,65 +235,65 @@ class CampaignService:
         if cmd.extra_metadata is not None:
             post.extra_metadata = cmd.extra_metadata
 
-        self.db.commit()
-        self.db.refresh(post)
+        await self.db.commit()
+        await self.db.refresh(post)
         return post
 
-    def cancel_post(self, post_id: UUID | str) -> ScheduledPost:
-        """Transitions a scheduled post into CANCELLED state."""
-        post = self.get_post_by_id_or_raise(post_id)
+    async def cancel_post(self, post_id: UUID | str) -> ScheduledPost:
+        post = await self.get_post_by_id_or_raise(post_id)
         if post.status == PostStatus.PUBLISHED:
             raise PostAlreadyPublishedError(post.id)
 
         post.status = PostStatus.CANCELLED
-        self.db.commit()
-        self.db.refresh(post)
+        await self.db.commit()
+        await self.db.refresh(post)
         return post
 
-    def delete_post(self, post_id: UUID | str) -> None:
-        """Permanently removes a draft or cancelled post."""
-        post = self.get_post_by_id_or_raise(post_id)
+    async def delete_post(self, post_id: UUID | str) -> None:
+        post = await self.get_post_by_id_or_raise(post_id)
         if post.status == PostStatus.PUBLISHED:
             raise PostAlreadyPublishedError(post.id)
 
-        self.db.delete(post)
-        self.db.commit()
+        await self.db.delete(post)
+        await self.db.commit()
 
-    def record_delivery(self, cmd: RecordPostDeliveryCommand) -> ScheduledPost:
-        """Mark post as PUBLISHED upon confirmation from platform adapter."""
-        post = self.get_post_by_id_or_raise(cmd.post_id)
+    async def record_delivery(self, cmd: RecordPostDeliveryCommand) -> ScheduledPost:
+        post = await self.get_post_by_id_or_raise(cmd.post_id)
         post.mark_as_published(
             post_id=cmd.platform_post_id,
             post_url=cmd.platform_post_url,
         )
-        self.db.commit()
-        self.db.refresh(post)
+        await self.db.commit()
+        await self.db.refresh(post)
         return post
 
-    def record_failure(self, cmd: RecordPostFailureCommand) -> ScheduledPost:
-        """Records platform error and triggers retry or transitions to FAILED."""
-        post = self.get_post_by_id_or_raise(cmd.post_id)
+    async def record_failure(self, cmd: RecordPostFailureCommand) -> ScheduledPost:
+        post = await self.get_post_by_id_or_raise(cmd.post_id)
         post.mark_as_failed(error=cmd.error_message)
-        self.db.commit()
-        self.db.refresh(post)
+        await self.db.commit()
+        await self.db.refresh(post)
         return post
 
-    def list_posts(
+    async def list_posts(
         self,
         status: PostStatus | None = None,
         statuses: list[PostStatus] | None = None,
         campaign_id: UUID | None = None,
         limit: int = 50,
     ) -> list[ScheduledPost]:
-        """Query posts filtered by status (e.g. DRAFT, SCHEDULED), list of statuses, or campaign."""
-        query = self.db.query(ScheduledPost).order_by(ScheduledPost.created_at.desc())
+        stmt = (
+            select(ScheduledPost)
+            .options(selectinload(ScheduledPost.account))
+            .order_by(ScheduledPost.created_at.desc())
+        )
 
         if status is not None:
-            query = query.filter(ScheduledPost.status == status)
+            stmt = stmt.where(ScheduledPost.status == status)
         elif statuses is not None:
-            query = query.filter(ScheduledPost.status.in_(statuses))
+            stmt = stmt.where(ScheduledPost.status.in_(statuses))
 
         if campaign_id is not None:
-            query = query.filter(ScheduledPost.campaign_id == campaign_id)
+            stmt = stmt.where(ScheduledPost.campaign_id == campaign_id)
 
-        return query.limit(limit).all()
+        result = await self.db.execute(stmt.limit(limit))
+        return list(result.scalars().all())

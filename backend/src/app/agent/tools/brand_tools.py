@@ -7,7 +7,7 @@ from app.modules.brand.service import BrandService
 
 
 @marketing_agent.tool
-def get_brand_knowledge(
+async def get_brand_knowledge(
     ctx: RunContext[AgentDeps],
     section: str | None = None,
 ) -> dict[str, Any]:
@@ -19,9 +19,9 @@ def get_brand_knowledge(
 
     Optional section filter: 'tone', 'personas', 'value_props', 'battlecards', 'all'
     """
-    with ctx.deps.db_session_scope() as db:
+    async with ctx.deps.db_session_scope() as db:
         service = BrandService(db)
-        kit = service.get_or_create_default_primary()
+        kit = await service.get_or_create_default_primary()
 
         clean_sec = (section or "all").lower().strip()
 

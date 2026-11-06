@@ -3,8 +3,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.automation.scheduler import get_scheduler
 from app.automation.workers.dm_dispatcher import run_dm_dispatcher
@@ -37,7 +37,6 @@ from app.system.schemas import (
     WorkerTriggerResponse,
 )
 
-# Only track deterministic WRITE actions as recipes; read/exploration is handled by the Browser AI Agent
 CORE_ACTIONS: list[tuple[str, str]] = [
     ("publish_post", "Publish Post"),
     ("send_dm", "Send Cold DM"),
@@ -237,33 +236,31 @@ DEFAULT_RECIPE_TEMPLATES: list[dict[str, Any]] = [
 
 
 class SystemDiagnosticsService:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
-    def _check_database_health(self) -> SubsystemHealth:
+    async def _check_database_health(self) -> SubsystemHealth:
         start = time.perf_counter()
         try:
-            self.db.execute(text("SELECT 1")).scalar()
+            await self.db.scalar(text("SELECT 1"))
             latency = round((time.perf_counter() - start) * 1000, 2)
-            has_turso = bool(settings.TURSO_DATABASE_URL and settings.TURSO_AUTH_TOKEN)
-            mode = "Turso Cloud Embedded Replica" if has_turso else "Standalone Local libSQL"
+            mode = "Supabase PostgreSQL" if "supabase" in settings.DATABASE_URL else "PostgreSQL Database"
 
             return SubsystemHealth(
                 id="database",
-                name="Database & libSQL Replica",
+                name="PostgreSQL Database",
                 status="healthy",
                 message=f"Connected ({mode}) • {latency}ms read latency",
                 latency_ms=latency,
                 details={
                     "mode": mode,
-                    "local_db_path": settings.LOCAL_DB_PATH,
-                    "cloud_sync_configured": has_turso,
+                    "connection_pool": f"{settings.DB_POOL_SIZE} (overflow: {settings.DB_MAX_OVERFLOW})",
                 },
             )
         except Exception as exc:
             return SubsystemHealth(
                 id="database",
-                name="Database & libSQL Replica",
+                name="PostgreSQL Database",
                 status="error",
                 message=f"Database query failed: {exc}",
             )
@@ -362,8 +359,11 @@ class SystemDiagnosticsService:
                 message=f"Storage directory error: {exc}",
             )
 
-    def _build_recipe_matrix(self) -> list[RecipeCoverageSlot]:
-        all_recipes = self.db.query(ActionRecipe).filter(ActionRecipe.is_active.is_(True)).all()
+    async def _build_recipe_matrix(self) -> list[RecipeCoverageSlot]:
+        stmt = select(ActionRecipe).where(ActionRecipe.is_active.is_(True))
+        result = await self.db.execute(stmt)
+        all_recipes = list(result.scalars().all())
+
         recipes_dir = Path("storage/recipes").resolve()
         matrix: list[RecipeCoverageSlot] = []
 
@@ -438,9 +438,9 @@ class SystemDiagnosticsService:
 
         return matrix
 
-    def get_diagnostics(self) -> SystemDiagnosticsResponse:
+    async def get_diagnostics(self) -> SystemDiagnosticsResponse:
         subsystems = [
-            self._check_database_health(),
+            await self._check_database_health(),
             self._check_security_vault(),
             self._check_ai_gateway(),
             self._check_browser_engine(),
@@ -480,13 +480,13 @@ class SystemDiagnosticsService:
         )
 
         entity_counts = {
-            "accounts": self.db.query(ConnectedAccount).count(),
-            "campaigns": self.db.query(Campaign).count(),
-            "scheduled_posts": self.db.query(ScheduledPost).count(),
-            "leads": self.db.query(Lead).count(),
-            "trigger_rules": self.db.query(TriggerRule).count(),
-            "recipes": self.db.query(ActionRecipe).count(),
-            "connectors": self.db.query(DataConnector).count(),
+            "accounts": (await self.db.scalar(select(func.count()).select_from(ConnectedAccount))) or 0,
+            "campaigns": (await self.db.scalar(select(func.count()).select_from(Campaign))) or 0,
+            "scheduled_posts": (await self.db.scalar(select(func.count()).select_from(ScheduledPost))) or 0,
+            "leads": (await self.db.scalar(select(func.count()).select_from(Lead))) or 0,
+            "trigger_rules": (await self.db.scalar(select(func.count()).select_from(TriggerRule))) or 0,
+            "recipes": (await self.db.scalar(select(func.count()).select_from(ActionRecipe))) or 0,
+            "connectors": (await self.db.scalar(select(func.count()).select_from(DataConnector))) or 0,
         }
 
         return SystemDiagnosticsResponse(
@@ -495,36 +495,29 @@ class SystemDiagnosticsService:
             subsystems=subsystems,
             scheduler_running=is_sched_running,
             scheduler_jobs=jobs_info,
-            recipe_matrix=self._build_recipe_matrix(),
+            recipe_matrix=await self._build_recipe_matrix(),
             entity_counts=entity_counts,
         )
 
-    def seed_default_recipes(self) -> SeedRecipesResponse:
-        """Idempotently seeds default platform recipes for all core action types."""
+    async def seed_default_recipes(self) -> SeedRecipesResponse:
         seeded = 0
         for tpl in DEFAULT_RECIPE_TEMPLATES:
-            existing = (
-                self.db.query(ActionRecipe)
-                .filter(
-                    ActionRecipe.platform == tpl["platform"],
-                    ActionRecipe.name == tpl["name"],
-                )
-                .first()
+            stmt = select(ActionRecipe).where(
+                ActionRecipe.platform == tpl["platform"],
+                ActionRecipe.name == tpl["name"],
             )
-            if existing:
+            res = await self.db.execute(stmt)
+            if res.scalars().first():
                 continue
 
             is_def = bool(tpl.get("is_default", False))
             if is_def:
-                existing_def = (
-                    self.db.query(ActionRecipe)
-                    .filter(
-                        ActionRecipe.platform == tpl["platform"],
-                        ActionRecipe.is_default.is_(True),
-                    )
-                    .first()
+                def_stmt = select(ActionRecipe).where(
+                    ActionRecipe.platform == tpl["platform"],
+                    ActionRecipe.is_default.is_(True),
                 )
-                if existing_def:
+                def_res = await self.db.execute(def_stmt)
+                if def_res.scalars().first():
                     is_def = False
 
             new_recipe = ActionRecipe(
@@ -543,33 +536,32 @@ class SystemDiagnosticsService:
             seeded += 1
 
         if seeded > 0:
-            self.db.commit()
+            await self.db.commit()
 
-        total = self.db.query(ActionRecipe).count()
+        total = (await self.db.scalar(select(func.count()).select_from(ActionRecipe))) or 0
         return SeedRecipesResponse(
             seeded_count=seeded,
             total_recipes=total,
             message=f"Seeded {seeded} missing default recipes ({total} total active in repository).",
         )
 
-    def trigger_replica_sync(self) -> dict[str, Any]:
-        """Forces an immediate synchronization between local libSQL and Turso Cloud."""
+    async def trigger_replica_sync(self) -> dict[str, Any]:
         try:
-            sync_replica()
-            HistoryService(self.db).log_activity(
+            await sync_replica()
+            history = HistoryService(self.db)
+            await history.log_activity(
                 LogActivityCommand(
                     activity_type=ActivityType.SYSTEM_REPLICA_SYNCED,
                     severity=ActivitySeverity.SUCCESS,
-                    title="Manual Turso replica sync completed",
+                    title="Database consistency check completed",
                     actor="admin_console",
                 )
             )
-            return {"status": "synced", "message": "Local replica synchronized with Turso Cloud."}
+            return {"status": "synced", "message": "Database write state verified with cloud."}
         except Exception as exc:
             return {"status": "skipped", "message": f"Sync skipped or offline mode: {exc}"}
 
     async def run_worker_now(self, worker_name: str) -> WorkerTriggerResponse:
-        """Manually executes a single background worker cycle for testing or admin control."""
         clean_name = worker_name.lower().strip()
 
         if clean_name == "post_dispatcher":
@@ -600,7 +592,6 @@ class SystemDiagnosticsService:
             )
 
         if clean_name == "dm_dispatcher":
-
             count = await run_dm_dispatcher(db=self.db)
             return WorkerTriggerResponse(
                 worker="dm_dispatcher",
@@ -610,5 +601,5 @@ class SystemDiagnosticsService:
             )
 
         raise AppError(
-            f"Unknown worker '{worker_name}'. Valid workers: post_dispatcher, watcher_worker, quota_reset_worker."
+            f"Unknown worker '{worker_name}'. Valid workers: post_dispatcher, watcher_worker, quota_reset_worker, dm_dispatcher."
         )

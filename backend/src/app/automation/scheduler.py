@@ -10,18 +10,15 @@ from app.automation.workers.watcher_worker import run_watcher_worker
 
 logger = logging.getLogger(__name__)
 
-# Global scheduler instance
 scheduler: AsyncIOScheduler = AsyncIOScheduler(timezone="UTC")
 
 
 def get_scheduler() -> AsyncIOScheduler:
-    """Returns the active APScheduler instance."""
     global scheduler
     return scheduler
 
 
 async def _safe_job_wrapper(job_func, name: str) -> None:
-    """Wraps job execution in a global try/except so scheduler thread never crashes."""
     try:
         await job_func()
     except Exception as exc:
@@ -29,7 +26,6 @@ async def _safe_job_wrapper(job_func, name: str) -> None:
 
 
 def register_automation_jobs() -> None:
-    """Registers periodic intervals for background workers."""
     scheduler.add_job(
         _safe_job_wrapper,
         trigger=IntervalTrigger(seconds=30),
@@ -62,7 +58,7 @@ def register_automation_jobs() -> None:
         trigger=IntervalTrigger(minutes=30),
         args=[run_quota_reset_worker, "QuotaResetWorker"],
         id="quota_reset_job",
-        name="Quota Reset & Cloud Sync",
+        name="Quota Reset & Consistency Check",
         replace_existing=True,
     )
 
@@ -70,7 +66,6 @@ def register_automation_jobs() -> None:
 
 
 def start_scheduler() -> None:
-    """Starts the APScheduler background runner, recreating instance if previously stopped."""
     global scheduler
     try:
         if getattr(scheduler, "state", 0) == 0:
@@ -85,10 +80,6 @@ def start_scheduler() -> None:
 
 
 def stop_scheduler() -> None:
-    """
-    Gracefully shuts down the background scheduler.
-    Safely handles cases where the event loop has already been closed by TestClient.
-    """
     global scheduler
     try:
         if getattr(scheduler, "running", False):

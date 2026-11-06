@@ -1,11 +1,13 @@
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
+import pytest
+from httpx import AsyncClient
 
 
-def test_get_primary_brand_kit_api(client: TestClient):
+@pytest.mark.anyio
+async def test_get_primary_brand_kit_api(client: AsyncClient):
     # GET /api/v1/brand/primary returns or auto-creates blank primary brand kit
-    res = client.get("/api/v1/brand/primary")
+    res = await client.get("/api/v1/brand/primary")
     assert res.status_code == 200
     data = res.json()
 
@@ -17,9 +19,10 @@ def test_get_primary_brand_kit_api(client: TestClient):
     assert "id" in data
 
 
-def test_create_and_patch_brand_kit_api(client: TestClient):
+@pytest.mark.anyio
+async def test_create_and_patch_brand_kit_api(client: AsyncClient):
     # 1. POST Create new secondary brand kit
-    create_res = client.post(
+    create_res = await client.post(
         "/api/v1/brand/",
         json={
             "name": "Acme SaaS",
@@ -38,7 +41,7 @@ def test_create_and_patch_brand_kit_api(client: TestClient):
     assert created_data["is_primary"] is False
 
     # 2. PATCH update the brand kit
-    patch_res = client.patch(
+    patch_res = await client.patch(
         f"/api/v1/brand/{kit_id}",
         json={
             "tagline": "Refined Analytics Engine",
@@ -53,9 +56,10 @@ def test_create_and_patch_brand_kit_api(client: TestClient):
     assert "witty" in updated_data["tone_traits"]
 
 
-def test_patch_nonexistent_brand_kit_returns_404(client: TestClient):
+@pytest.mark.anyio
+async def test_patch_nonexistent_brand_kit_returns_404(client: AsyncClient):
     fake_uuid = str(uuid4())
-    res = client.patch(
+    res = await client.patch(
         f"/api/v1/brand/{fake_uuid}",
         json={"name": "Ghost Brand"},
     )
@@ -63,9 +67,10 @@ def test_patch_nonexistent_brand_kit_returns_404(client: TestClient):
     assert res.json()["error"] == "NOT_FOUND"
 
 
-def test_create_brand_kit_name_exceeds_max_length_returns_422(client: TestClient):
+@pytest.mark.anyio
+async def test_create_brand_kit_name_exceeds_max_length_returns_422(client: AsyncClient):
     # Name exceeding max_length=150
-    res = client.post(
+    res = await client.post(
         "/api/v1/brand/",
         json={"name": "x" * 151},
     )

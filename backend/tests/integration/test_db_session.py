@@ -1,48 +1,65 @@
-from pathlib import Path
-
 import pytest
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import _ensure_local_db_dir, get_db_session
-
-
-def test_ensure_local_db_dir_creates_directories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Verify parent directories for LOCAL_DB_PATH are created if missing."""
-    nested_path = tmp_path / "deep" / "dir" / "test.db"
-
-    from app.core import config
-    monkeypatch.setattr(config.settings, "LOCAL_DB_PATH", str(nested_path))
-
-    ensured = _ensure_local_db_dir()
-
-    assert ensured.parent.exists()
-    assert ensured == nested_path.resolve()
+from app.db.session import (
+    get_db_session,
+    sync_replica,
+)
 
 
-def test_get_db_session_lifecycle():
-    """Verify get_db_session yields an active session and closes upon iteration completion."""
+def test_supabase_pooler_cache_disabling():
+    """
+    Supabase PgBouncer / Supavisor pooler on port 6543 requires statement caches
+    to be zeroed to prevent prepared statement collisions.
+    """
+    from app.db.session import connect_args, db_url
+
+    if ":6543" in db_url:
+        assert connect_args.get("prepared_statement_cache_size") == 0
+        assert connect_args.get("statement_cache_size") == 0
+
+
+@pytest.mark.anyio
+async def test_get_db_session_lifecycle():
+    """Verify get_db_session yields an active AsyncSession and closes cleanly."""
     session_gen = get_db_session()
-    session = next(session_gen)
+    session = await anext(session_gen)
 
-    assert isinstance(session, Session)
+    assert isinstance(session, AsyncSession)
     assert session.is_active
 
-    with pytest.raises(StopIteration):
-        next(session_gen)
+    # Generator terminates cleanly upon completion
+    with pytest.raises(StopAsyncIteration):
+        await anext(session_gen)
 
 
-def test_session_rollback_on_error(db_session: Session):
-    """Verify transactional safety: rolled back data is never committed."""
-    db_session.execute(text("CREATE TABLE temp_log (id INT, msg TEXT);"))
-    db_session.commit()
+@pytest.mark.anyio
+async def test_session_transaction_rollback_on_error(db_session: AsyncSession):
+    """Verify transactional safety: rolled back operations leave no trace in database."""
+    await db_session.execute(text("CREATE TABLE IF NOT EXISTS temp_audit (id INT, note TEXT);"))
+    await db_session.commit()
 
     try:
-        db_session.execute(text("INSERT INTO temp_log VALUES (1, 'initial');"))
-        raise ValueError("Simulated unexpected crash")
-    except ValueError:
-        db_session.rollback()
+        await db_session.execute(text("INSERT INTO temp_audit VALUES (1, 'initial');"))
+        raise RuntimeError("Simulated crash mid-transaction")
+    except RuntimeError:
+        await db_session.rollback()
 
-    # The uncommitted row must not exist
-    count = db_session.execute(text("SELECT COUNT(*) FROM temp_log;")).scalar()
+    result = await db_session.execute(text("SELECT COUNT(*) FROM temp_audit;"))
+    count = result.scalar()
     assert count == 0
+
+
+@pytest.mark.anyio
+async def test_session_raw_query_execution(db_session: AsyncSession):
+    """Verify active database responsiveness with a basic scalar query."""
+    val = await db_session.scalar(text("SELECT 42;"))
+    assert val == 42
+
+
+@pytest.mark.anyio
+async def test_sync_replica_compatibility():
+    """Verify sync_replica() executes as an async no-op in PostgreSQL architecture."""
+    # Must run without raising errors
+    await sync_replica()

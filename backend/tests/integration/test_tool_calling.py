@@ -1,7 +1,7 @@
 import pytest
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 from pydantic_ai.models.test import TestModel
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.llm import marketing_agent
 from app.agent.loop import run_agent_turn, stream_agent_turn
@@ -13,9 +13,9 @@ from app.modules.copilot.service import CopilotService
 
 
 @pytest.mark.anyio
-async def test_run_agent_turn_calls_tools_and_logs_traces(db_session: Session):
+async def test_run_agent_turn_calls_tools_and_logs_traces(db_session: AsyncSession):
     """
-    Verifies the complete ReAct cycle:
+    Verifies the complete ReAct cycle asynchronously:
     1. User sends a prompt in a ChatSession.
     2. Agent invokes `get_connected_accounts` tool against the database.
     3. Tool trace is logged in `tool_execution_logs`.
@@ -25,14 +25,14 @@ async def test_run_agent_turn_calls_tools_and_logs_traces(db_session: Session):
     copilot_service = CopilotService(db_session)
 
     # Seed a connected account
-    account_service.create_account(
+    await account_service.create_account(
         CreateAccountCommand(
             platform=PlatformType.TWITTER,
             handle="react_loop_bot",
         )
     )
 
-    session = copilot_service.create_session(
+    session = await copilot_service.create_session(
         CreateChatSessionCommand(
             title="Account Audit Session",
             system_prompt_override="Be concise and factual.",
@@ -58,20 +58,20 @@ async def test_run_agent_turn_calls_tools_and_logs_traces(db_session: Session):
     assert "@react_loop_bot" in assistant_msg.content
 
     # 2. Verify conversation history persisted both User and Assistant turns
-    messages = copilot_service.list_messages(session.id)
+    messages = await copilot_service.list_messages(session.id)
     assert len(messages) == 2
     assert messages[0].role == ChatRole.USER
     assert messages[0].content == "Which social accounts do I have connected?"
     assert messages[1].role == ChatRole.ASSISTANT
 
     # 3. Verify tool execution was traced in ToolExecutionLog
-    tool_traces = copilot_service.list_tool_executions(session.id)
+    tool_traces = await copilot_service.list_tool_executions(session.id)
     assert len(tool_traces) >= 1
     assert tool_traces[0].tool_name == "get_connected_accounts"
 
 
 @pytest.mark.anyio
-async def test_run_agent_turn_calls_brand_knowledge_tool(db_session: Session):
+async def test_run_agent_turn_calls_brand_knowledge_tool(db_session: AsyncSession):
     """
     Verifies autonomous brand discovery:
     1. Agent invokes `get_brand_knowledge` on demand.
@@ -79,7 +79,7 @@ async def test_run_agent_turn_calls_brand_knowledge_tool(db_session: Session):
     3. Assistant message response contains brand knowledge.
     """
     copilot_service = CopilotService(db_session)
-    session = copilot_service.create_session(
+    session = await copilot_service.create_session(
         CreateChatSessionCommand(title="Brand Knowledge Audit")
     )
 
@@ -99,16 +99,16 @@ async def test_run_agent_turn_calls_brand_knowledge_tool(db_session: Session):
     assert "Orlume" in assistant_msg.content
 
     # Verify tool execution trace
-    tool_traces = copilot_service.list_tool_executions(session.id)
+    tool_traces = await copilot_service.list_tool_executions(session.id)
     assert len(tool_traces) >= 1
     assert tool_traces[0].tool_name == "get_brand_knowledge"
 
 
 @pytest.mark.anyio
-async def test_stream_agent_turn_persists_streamed_response(db_session: Session):
+async def test_stream_agent_turn_persists_streamed_response(db_session: AsyncSession):
     """Verifies that streaming token generation yields chunks and saves the final reply."""
     copilot_service = CopilotService(db_session)
-    session = copilot_service.create_session(
+    session = await copilot_service.create_session(
         CreateChatSessionCommand(title="Streaming Session")
     )
 
@@ -131,16 +131,17 @@ async def test_stream_agent_turn_persists_streamed_response(db_session: Session)
     assert "Streaming viral hook 1, 2, 3!" in full_text
 
     # Verify both user prompt and completed assistant response are saved
-    messages = copilot_service.list_messages(session.id)
+    messages = await copilot_service.list_messages(session.id)
     assert len(messages) == 2
     assert messages[1].role == ChatRole.ASSISTANT
     assert messages[1].content == full_text
 
 
-def test_copilot_chat_and_sse_stream_api_endpoints(client: TestClient):
+@pytest.mark.anyio
+async def test_copilot_chat_and_sse_stream_api_endpoints(client: AsyncClient):
     """Verifies POST /sessions/{id}/chat and POST /sessions/{id}/stream HTTP endpoints."""
     # 1. Create session via API
-    session_res = client.post(
+    session_res = await client.post(
         "/api/v1/copilot/sessions",
         json={"title": "API Agent Session"},
     )
@@ -154,7 +155,7 @@ def test_copilot_chat_and_sse_stream_api_endpoints(client: TestClient):
 
     # 2. Test synchronous /chat endpoint with overridden TestModel
     with marketing_agent.override(model=mock_model):
-        chat_res = client.post(
+        chat_res = await client.post(
             f"/api/v1/copilot/sessions/{session_id}/chat",
             json={"content": "Draft a launch campaign"},
         )
@@ -164,10 +165,13 @@ def test_copilot_chat_and_sse_stream_api_endpoints(client: TestClient):
         assert chat_data["content"] == "Campaign drafted and ready for launch!"
 
         # 3. Test SSE /stream endpoint
-        stream_res = client.post(
+        stream_res = await client.post(
             f"/api/v1/copilot/sessions/{session_id}/stream",
             json={"content": "Stream the next steps"},
         )
         assert stream_res.status_code == 200
         assert "text/event-stream" in stream_res.headers["content-type"]
         assert "data: [DONE]" in stream_res.text
+        # Assert components of the sentence since SSE chunks split it
+        assert "Campaign" in stream_res.text
+        assert "launch!" in stream_res.text

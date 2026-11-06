@@ -1,10 +1,10 @@
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import ActivitySeverity, ActivityType
-from app.db.session import session_factory
+from app.db.session import async_session_factory
 from app.modules.accounts.service import AccountService
 from app.modules.history.commands import LogActivityCommand
 from app.modules.history.service import HistoryService
@@ -15,16 +15,14 @@ from app.platforms.registry import PlatformRegistry
 logger = logging.getLogger(__name__)
 
 
-async def run_watcher_worker(db: Session | None = None) -> int:
+async def run_watcher_worker(db: AsyncSession | None = None) -> int:
     """
     Periodic scraper polling loop:
-    1. Iterates active WatchedHandles due for scraping.
-    2. Resolves an active scraper profile for the target platform.
-    3. Scrapes recent timeline posts.
-    4. Evaluates posts against trigger rules and logs opportunities.
+    Evaluates competitor posts against trigger rules and logs opportunities.
+    Guarantees that a single failing scrape does not abort remaining handles.
     """
     owns_session = db is None
-    session = db or session_factory()
+    session = db if db is not None else async_session_factory()
     matches_created = 0
 
     try:
@@ -32,10 +30,11 @@ async def run_watcher_worker(db: Session | None = None) -> int:
         account_service = AccountService(session)
         history_service = HistoryService(session)
 
-        watched_handles = trigger_service.list_watched_handles(active_only=True)
+        watched_handles = await trigger_service.list_watched_handles(active_only=True)
         if not watched_handles:
             return 0
 
+        all_accounts = await account_service.list_accounts(active_only=True)
         now = datetime.now(UTC)
 
         for handle in watched_handles:
@@ -43,15 +42,19 @@ async def run_watcher_worker(db: Session | None = None) -> int:
             if handle.last_scraped_at:
                 cutoff = handle.last_scraped_at + timedelta(minutes=handle.scrape_frequency_minutes)
                 if now < cutoff:
-                    continue  # Not due yet
+                    continue
 
-            # Find an active connected account on the same platform to act as browser scraper
+            # Find active account to act as scraper
             scraper_accounts = [
-                acc for acc in account_service.list_accounts(active_only=True)
+                acc for acc in all_accounts
                 if acc.platform == handle.platform and acc.status.value == "active"
             ]
             if not scraper_accounts:
-                logger.debug("No active account available to scrape %s for @%s", handle.platform.value, handle.handle)
+                logger.debug(
+                    "No active account available to scrape %s for @%s",
+                    handle.platform.value,
+                    handle.handle,
+                )
                 continue
 
             scraper_account = scraper_accounts[0]
@@ -60,12 +63,14 @@ async def run_watcher_worker(db: Session | None = None) -> int:
                 adapter = PlatformRegistry.get_adapter(scraper_account)
                 logger.info("Watcher: Scraping @%s on %s...", handle.handle, handle.platform.value)
 
-                scraped_posts = await adapter.scrape_feed(handle.handle, limit=10)
-                await adapter.close()
+                try:
+                    scraped_posts = await adapter.scrape_feed(handle.handle, limit=10)
+                finally:
+                    await adapter.close()
 
-                # Evaluate each post against trigger rules
+                # Evaluate posts against trigger rules
                 for post in scraped_posts:
-                    matches = trigger_service.evaluate_incoming_post(
+                    matches = await trigger_service.evaluate_incoming_post(
                         EvaluateIncomingPostCommand(
                             platform=handle.platform,
                             platform_post_id=post.platform_post_id,
@@ -77,7 +82,7 @@ async def run_watcher_worker(db: Session | None = None) -> int:
                     )
                     for match in matches:
                         matches_created += 1
-                        history_service.log_activity(
+                        await history_service.log_activity(
                             LogActivityCommand(
                                 activity_type=ActivityType.TRIGGER_MATCHED,
                                 severity=ActivitySeverity.INFO,
@@ -91,13 +96,15 @@ async def run_watcher_worker(db: Session | None = None) -> int:
 
                 # Update timestamp
                 handle.last_scraped_at = now
-                session.commit()
+                await session.commit()
 
             except Exception as exc:
+                # Crucial rollback prevents poisoning subsequent handles in asyncpg
+                await session.rollback()
                 logger.error("Watcher failed scraping @%s: %s", handle.handle, exc, exc_info=True)
 
         return matches_created
 
     finally:
         if owns_session:
-            session.close()
+            await session.close()

@@ -1,11 +1,12 @@
 from unittest.mock import AsyncMock, patch
 
-from fastapi.testclient import TestClient
+import pytest
+from httpx import AsyncClient
 
 
-def _create_account_via_api(client: TestClient, handle: str = "api_outreach_sender") -> str:
+async def _create_account_via_api(client: AsyncClient, handle: str = "api_outreach_sender") -> str:
     """Helper to create a connected account via API."""
-    res = client.post(
+    res = await client.post(
         "/api/v1/accounts/",
         json={"platform": "twitter", "handle": handle},
     )
@@ -18,9 +19,10 @@ def _create_account_via_api(client: TestClient, handle: str = "api_outreach_send
 # =============================================================================
 
 
-def test_lead_api_lifecycle(client: TestClient):
+@pytest.mark.anyio
+async def test_lead_api_lifecycle(client: AsyncClient):
     # 1. Create lead (verifying @ is cleanly stripped)
-    create_res = client.post(
+    create_res = await client.post(
         "/api/v1/outreach/leads",
         json={
             "platform": "twitter",
@@ -39,17 +41,17 @@ def test_lead_api_lifecycle(client: TestClient):
     lead_id = data["id"]
 
     # 2. Get lead by ID
-    get_res = client.get(f"/api/v1/outreach/leads/{lead_id}")
+    get_res = await client.get(f"/api/v1/outreach/leads/{lead_id}")
     assert get_res.status_code == 200
     assert get_res.json()["id"] == lead_id
 
     # 3. List leads with filter
-    list_res = client.get("/api/v1/outreach/leads?tier=micro&stage=discovered")
+    list_res = await client.get("/api/v1/outreach/leads?tier=micro&stage=discovered")
     assert list_res.status_code == 200
     assert len(list_res.json()) >= 1
 
     # 4. Patch lead
-    patch_res = client.patch(
+    patch_res = await client.patch(
         f"/api/v1/outreach/leads/{lead_id}",
         json={"stage": "qualified", "display_name": "Mark (Qualified)"},
     )
@@ -58,20 +60,21 @@ def test_lead_api_lifecycle(client: TestClient):
     assert patch_res.json()["display_name"] == "Mark (Qualified)"
 
     # 5. Delete lead
-    del_res = client.delete(f"/api/v1/outreach/leads/{lead_id}")
+    del_res = await client.delete(f"/api/v1/outreach/leads/{lead_id}")
     assert del_res.status_code == 204
 
     # 6. Verify 404
-    assert client.get(f"/api/v1/outreach/leads/{lead_id}").status_code == 404
+    assert (await client.get(f"/api/v1/outreach/leads/{lead_id}")).status_code == 404
 
 
-def test_create_duplicate_lead_returns_409(client: TestClient):
+@pytest.mark.anyio
+async def test_create_duplicate_lead_returns_409(client: AsyncClient):
     payload = {"platform": "twitter", "handle": "unique_influencer"}
-    res1 = client.post("/api/v1/outreach/leads", json=payload)
+    res1 = await client.post("/api/v1/outreach/leads", json=payload)
     assert res1.status_code == 201
 
     # Duplicate attempt with leading @
-    res2 = client.post("/api/v1/outreach/leads", json={"platform": "twitter", "handle": "@unique_influencer"})
+    res2 = await client.post("/api/v1/outreach/leads", json={"platform": "twitter", "handle": "@unique_influencer"})
     assert res2.status_code == 409
     assert res2.json()["error"] == "CONFLICT"
 
@@ -81,11 +84,12 @@ def test_create_duplicate_lead_returns_409(client: TestClient):
 # =============================================================================
 
 
-def test_outreach_campaign_api_lifecycle(client: TestClient):
-    account_id = _create_account_via_api(client, "campaign_sender")
+@pytest.mark.anyio
+async def test_outreach_campaign_api_lifecycle(client: AsyncClient):
+    account_id = await _create_account_via_api(client, "campaign_sender")
 
     # 1. Create campaign
-    create_res = client.post(
+    create_res = await client.post(
         "/api/v1/outreach/campaigns",
         json={
             "name": "Creator Partnerships Q4",
@@ -101,12 +105,12 @@ def test_outreach_campaign_api_lifecycle(client: TestClient):
     assert camp_data["is_active"] is True
 
     # 2. Get campaign
-    get_res = client.get(f"/api/v1/outreach/campaigns/{campaign_id}")
+    get_res = await client.get(f"/api/v1/outreach/campaigns/{campaign_id}")
     assert get_res.status_code == 200
     assert get_res.json()["id"] == campaign_id
 
     # 3. Patch campaign
-    patch_res = client.patch(
+    patch_res = await client.patch(
         f"/api/v1/outreach/campaigns/{campaign_id}",
         json={"name": "Renamed Campaign", "is_active": False},
     )
@@ -115,11 +119,11 @@ def test_outreach_campaign_api_lifecycle(client: TestClient):
     assert patch_res.json()["is_active"] is False
 
     # 4. Delete campaign
-    del_res = client.delete(f"/api/v1/outreach/campaigns/{campaign_id}")
+    del_res = await client.delete(f"/api/v1/outreach/campaigns/{campaign_id}")
     assert del_res.status_code == 204
 
     # 5. Verify 404
-    assert client.get(f"/api/v1/outreach/campaigns/{campaign_id}").status_code == 404
+    assert (await client.get(f"/api/v1/outreach/campaigns/{campaign_id}")).status_code == 404
 
 
 # =============================================================================
@@ -127,17 +131,18 @@ def test_outreach_campaign_api_lifecycle(client: TestClient):
 # =============================================================================
 
 
-def test_stage_and_review_message_flow(client: TestClient):
-    account_id = _create_account_via_api(client, "sender_pro")
+@pytest.mark.anyio
+async def test_stage_and_review_message_flow(client: AsyncClient):
+    account_id = await _create_account_via_api(client, "sender_pro")
 
-    lead_res = client.post(
+    lead_res = await client.post(
         "/api/v1/outreach/leads",
         json={"platform": "twitter", "handle": "staged_prospect"},
     )
     lead_id = lead_res.json()["id"]
 
     # 1. Stage message behind human approval gate
-    stage_res = client.post(
+    stage_res = await client.post(
         "/api/v1/outreach/messages/stage",
         json={
             "lead_id": lead_id,
@@ -152,12 +157,12 @@ def test_stage_and_review_message_flow(client: TestClient):
     assert msg_data["status"] == "staged"
 
     # 2. List messages
-    list_res = client.get(f"/api/v1/outreach/messages?lead_id={lead_id}&status=staged")
+    list_res = await client.get(f"/api/v1/outreach/messages?lead_id={lead_id}&status=staged")
     assert list_res.status_code == 200
     assert len(list_res.json()) == 1
 
     # 3. Review message (approve with copy refinement)
-    review_res = client.post(
+    review_res = await client.post(
         f"/api/v1/outreach/messages/{message_id}/review",
         json={
             "status": "approved",
@@ -171,17 +176,18 @@ def test_stage_and_review_message_flow(client: TestClient):
     assert reviewed_data["reviewed_at"] is not None
 
 
-def test_stage_message_uncontactable_lead_returns_409(client: TestClient):
-    account_id = _create_account_via_api(client, "sender_bot")
+@pytest.mark.anyio
+async def test_stage_message_uncontactable_lead_returns_409(client: AsyncClient):
+    account_id = await _create_account_via_api(client, "sender_bot")
 
-    lead_res = client.post(
+    lead_res = await client.post(
         "/api/v1/outreach/leads",
         json={"platform": "twitter", "handle": "optout_lead", "stage": "do_not_contact"},
     )
     lead_id = lead_res.json()["id"]
 
     # Staging message for an uncontactable lead must return 409 Conflict
-    stage_res = client.post(
+    stage_res = await client.post(
         "/api/v1/outreach/messages/stage",
         json={
             "lead_id": lead_id,
@@ -193,17 +199,20 @@ def test_stage_message_uncontactable_lead_returns_409(client: TestClient):
     assert stage_res.json()["error"] == "CONFLICT"
 
 
-def test_review_message_invalid_status_returns_422(client: TestClient):
+@pytest.mark.anyio
+async def test_review_message_invalid_status_returns_422(client: AsyncClient):
     fake_uuid = "00000000-0000-0000-0000-000000000000"
-    res = client.post(
+    res = await client.post(
         f"/api/v1/outreach/messages/{fake_uuid}/review",
         json={"status": "invalid_status"},
     )
     assert res.status_code == 422
     assert res.json()["error"] == "VALIDATION_ERROR"
 
-def test_scout_creators_api_endpoint(client: TestClient):
-    account_id = _create_account_via_api(client, "scout_tester_bot")
+
+@pytest.mark.anyio
+async def test_scout_creators_api_endpoint(client: AsyncClient):
+    account_id = await _create_account_via_api(client, "scout_tester_bot")
 
     mock_scout_json = (
         '[\n'
@@ -215,7 +224,7 @@ def test_scout_creators_api_endpoint(client: TestClient):
     with patch("app.modules.outreach.router.scout_influencer_leads", new_callable=AsyncMock) as mock_scout:
         mock_scout.return_value = mock_scout_json
 
-        res = client.post(
+        res = await client.post(
             "/api/v1/outreach/scout",
             json={
                 "account_id": account_id,
@@ -233,22 +242,23 @@ def test_scout_creators_api_endpoint(client: TestClient):
         assert len(data["leads"]) == 2
 
     # Verify leads were automatically persisted in CRM
-    leads_res = client.get("/api/v1/outreach/leads")
+    leads_res = await client.get("/api/v1/outreach/leads")
     assert leads_res.status_code == 200
     crm_handles = [item["handle"] for item in leads_res.json()]
     assert "indie_founder_1" in crm_handles
     assert "devtool_creator" in crm_handles
 
 
-def test_sweep_inbox_api_endpoint(client: TestClient):
-    account_id = _create_account_via_api(client, "inbox_checker_bot")
+@pytest.mark.anyio
+async def test_sweep_inbox_api_endpoint(client: AsyncClient):
+    account_id = await _create_account_via_api(client, "inbox_checker_bot")
 
     mock_summary = "Checked inbox: Found 1 unread reply from @billgates saying 'Sounds interesting, tell me more.'"
 
     with patch("app.modules.outreach.router.read_and_summarize_inbox", new_callable=AsyncMock) as mock_inbox:
         mock_inbox.return_value = mock_summary
 
-        res = client.post(f"/api/v1/outreach/sweep-inbox?account_id={account_id}")
+        res = await client.post(f"/api/v1/outreach/sweep-inbox?account_id={account_id}")
         assert res.status_code == 200
         data = res.json()
         assert data["account"] == "inbox_checker_bot"

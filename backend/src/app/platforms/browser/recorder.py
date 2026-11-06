@@ -19,10 +19,11 @@ if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
 from playwright.async_api import async_playwright  # noqa: E402
-from sqlalchemy.orm import Session  # noqa: E402
+from sqlalchemy import select, update  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from app.common.enums import PlatformType  # noqa: E402
-from app.db.session import session_factory, sync_replica  # noqa: E402
+from app.db.session import async_session_factory, sync_replica  # noqa: E402
 from app.modules.accounts.models import ConnectedAccount  # noqa: E402
 from app.modules.recipes.models import ActionRecipe  # noqa: E402
 from app.platforms.browser.driver import create_stealth_context  # noqa: E402
@@ -274,7 +275,7 @@ RECORDER_INJECTION_JS = """
 
 
 # =============================================================================
-# Terminal UI & Database Persistence Helpers
+# Terminal UI & Database Persistence Helpers (Asynchronous)
 # =============================================================================
 
 
@@ -284,8 +285,10 @@ def _print_banner() -> None:
     print(f"{BLUE}{BOLD}╚══════════════════════════════════════════════════════════════════════╝{RESET}")
 
 
-def _print_coverage_table(db: Session) -> None:
-    recipes = db.query(ActionRecipe).filter(ActionRecipe.is_active.is_(True)).all()
+async def _print_coverage_table(db: AsyncSession) -> None:
+    stmt = select(ActionRecipe).where(ActionRecipe.is_active.is_(True))
+    result = await db.execute(stmt)
+    recipes = list(result.scalars().all())
     recipes_dir = Path("storage/recipes").resolve()
 
     print(f"\n{BOLD}  Current Write Recipe Coverage (Read/Explore handled by AI Agent):{RESET}")
@@ -320,23 +323,22 @@ def _print_coverage_table(db: Session) -> None:
     print(f"{DIM}  {'─' * (len(header) - 2)}{RESET}\n")
 
 
-def _upsert_recipe_to_db(
-    db: Session,
+async def _upsert_recipe_to_db(
+    db: AsyncSession,
     platform: str,
     action_type: str,
     steps: list[dict[str, Any]],
 ) -> ActionRecipe:
-    """Saves or updates the recorded default recipe inside the database."""
+    """Saves or updates the recorded default recipe inside the database asynchronously."""
     p_enum = PlatformType(platform.lower())
     action_meta = ACTION_DEFINITIONS.get(action_type, ACTION_DEFINITIONS["publish_post"])
     recipe_name = f"{platform.capitalize()} {action_meta['name']}"
     is_post_default = action_type == "publish_post"
 
-    existing_recipes = (
-        db.query(ActionRecipe)
-        .filter(ActionRecipe.platform == p_enum)
-        .all()
-    )
+    stmt = select(ActionRecipe).where(ActionRecipe.platform == p_enum)
+    result = await db.execute(stmt)
+    existing_recipes = list(result.scalars().all())
+
     target_recipe: ActionRecipe | None = None
     for r in existing_recipes:
         if (r.extra_metadata or {}).get("action_type") == action_type or r.name == recipe_name:
@@ -344,10 +346,14 @@ def _upsert_recipe_to_db(
             break
 
     if is_post_default:
-        db.query(ActionRecipe).filter(
-            ActionRecipe.platform == p_enum,
-            ActionRecipe.is_default.is_(True),
-        ).update({ActionRecipe.is_default: False})
+        await db.execute(
+            update(ActionRecipe)
+            .where(
+                ActionRecipe.platform == p_enum,
+                ActionRecipe.is_default.is_(True),
+            )
+            .values(is_default=False)
+        )
 
     now_iso = datetime.now(UTC).isoformat()
 
@@ -363,8 +369,8 @@ def _upsert_recipe_to_db(
             "recorded_via": "cli",
             "recorded_at": now_iso,
         }
-        db.commit()
-        db.refresh(target_recipe)
+        await db.commit()
+        await db.refresh(target_recipe)
         return target_recipe
 
     new_recipe = ActionRecipe(
@@ -381,12 +387,12 @@ def _upsert_recipe_to_db(
         },
     )
     db.add(new_recipe)
-    db.commit()
-    db.refresh(new_recipe)
+    await db.commit()
+    await db.refresh(new_recipe)
     return new_recipe
 
 
-def sync_all_disk_recipes_to_db(db: Session) -> int:
+async def sync_all_disk_recipes_to_db(db: AsyncSession) -> int:
     """Scans storage/recipes/*.json and syncs local JSON files into the database."""
     recipes_dir = Path("storage/recipes").resolve()
     if not recipes_dir.exists():
@@ -410,21 +416,21 @@ def sync_all_disk_recipes_to_db(db: Session) -> int:
         try:
             steps = json.loads(file_path.read_text(encoding="utf-8"))
             if isinstance(steps, list) and steps:
-                _upsert_recipe_to_db(db, platform_str, action_str, steps)
+                await _upsert_recipe_to_db(db, platform_str, action_str, steps)
                 synced += 1
                 print(f"  {GREEN}✓ Synced{RESET} {file_path.name} -> DB ({platform_str} / {action_str})")
         except Exception as exc:
             print(f"  {YELLOW}⚠️ Failed to sync {file_path.name}: {exc}{RESET}")
 
     try:
-        sync_replica()
+        await sync_replica()
     except Exception:
         pass
     return synced
 
 
 async def record_single_workflow(
-    db: Session,
+    db: AsyncSession,
     platform: str,
     action_type: str,
     target_url_override: str | None = None,
@@ -434,11 +440,9 @@ async def record_single_workflow(
     clean_action = action_type.lower().strip()
     action_meta = ACTION_DEFINITIONS.get(clean_action, ACTION_DEFINITIONS["publish_post"])
 
-    account = (
-        db.query(ConnectedAccount)
-        .filter(ConnectedAccount.platform == clean_platform)
-        .first()
-    )
+    stmt = select(ConnectedAccount).where(ConnectedAccount.platform == PlatformType(clean_platform))
+    result = await db.execute(stmt)
+    account = result.scalars().first()
 
     session_mgr = BrowserSessionManager()
     profile_key = account.id if account else f"cli_{clean_platform}"
@@ -561,10 +565,10 @@ async def record_single_workflow(
         legacy_file = recipes_dir / f"{clean_platform}_publish.json"
         legacy_file.write_text(json.dumps(cleaned_steps, indent=2), encoding="utf-8")
 
-    # 2. Upsert into Database & Sync Turso Replica
-    saved_recipe = _upsert_recipe_to_db(db, clean_platform, clean_action, cleaned_steps)
+    # 2. Upsert into Database asynchronously
+    saved_recipe = await _upsert_recipe_to_db(db, clean_platform, clean_action, cleaned_steps)
     try:
-        sync_replica()
+        await sync_replica()
     except Exception:
         pass
 
@@ -583,10 +587,9 @@ async def run_interactive_cli(
     initial_action: str | None = None,
     target_url: str | None = None,
 ) -> None:
-    db = session_factory()
-    try:
+    async with async_session_factory() as db:
         _print_banner()
-        _print_coverage_table(db)
+        await _print_coverage_table(db)
 
         if initial_platform and initial_action:
             await record_single_workflow(db, initial_platform, initial_action, target_url)
@@ -599,11 +602,17 @@ async def run_interactive_cli(
                 print(f"  {CYAN}[{idx}]{RESET} {p_name.capitalize()}")
             print(f"  {MAGENTA}[S]{RESET} Sync all local storage/recipes/*.json files to Database")
 
-            p_choice = input(f"\n{BOLD}Enter choice [1-3 or S] (default 1): {RESET}").strip().upper() or "1"
+            p_choice = (
+                await asyncio.to_thread(
+                    input,
+                    f"\n{BOLD}Enter choice [1-3 or S] (default 1): {RESET}",
+                )
+            ).strip().upper() or "1"
+
             if p_choice == "S":
-                count = sync_all_disk_recipes_to_db(db)
+                count = await sync_all_disk_recipes_to_db(db)
                 print(f"\n{GREEN}✅ Synced {count} disk recipes to database.{RESET}")
-                _print_coverage_table(db)
+                await _print_coverage_table(db)
                 return
 
             p_idx = max(0, min(len(platforms) - 1, int(p_choice) - 1)) if p_choice.isdigit() else 0
@@ -619,11 +628,17 @@ async def run_interactive_cli(
                 print(f"  {CYAN}[{idx}]{RESET} {BOLD}{meta['label']:<24}{RESET} {DIM}({a_key}){RESET}")
             print(f"  {MAGENTA}[A]{RESET} {BOLD}Record All 3 Default Write Recipes Sequentially{RESET}")
 
-            a_choice = input(f"\n{BOLD}Enter choice [1-{len(action_keys)} or A] (default 1): {RESET}").strip().upper() or "1"
+            a_choice = (
+                await asyncio.to_thread(
+                    input,
+                    f"\n{BOLD}Enter choice [1-{len(action_keys)} or A] (default 1): {RESET}",
+                )
+            ).strip().upper() or "1"
+
             if a_choice == "A":
                 for a_key in action_keys:
                     await record_single_workflow(db, selected_platform, a_key, target_url)
-                _print_coverage_table(db)
+                await _print_coverage_table(db)
                 return
 
             a_idx = max(0, min(len(action_keys) - 1, int(a_choice) - 1)) if a_choice.isdigit() else 0
@@ -632,10 +647,7 @@ async def run_interactive_cli(
             selected_action = initial_action.lower()
 
         await record_single_workflow(db, selected_platform, selected_action, target_url)
-        _print_coverage_table(db)
-
-    finally:
-        db.close()
+        await _print_coverage_table(db)
 
 
 if __name__ == "__main__":

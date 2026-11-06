@@ -4,7 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.browser_agent import read_and_summarize_inbox, scout_influencer_leads
 from app.common.enums import (
@@ -14,6 +14,7 @@ from app.common.enums import (
     PlatformType,
 )
 from app.db.dependencies import get_db_session
+from app.db.session import async_session_factory
 from app.modules.accounts.service import AccountService
 from app.modules.outreach.commands import CreateLeadCommand
 from app.modules.outreach.schemas import (
@@ -34,8 +35,7 @@ from app.modules.outreach.service import OutreachService
 router = APIRouter()
 
 
-def get_outreach_service(db: Session = Depends(get_db_session)) -> OutreachService:
-    """Dependency injection factory for OutreachService."""
+def get_outreach_service(db: AsyncSession = Depends(get_db_session)) -> OutreachService:
     return OutreachService(db)
 
 
@@ -50,11 +50,11 @@ def get_outreach_service(db: Session = Depends(get_db_session)) -> OutreachServi
     status_code=status.HTTP_201_CREATED,
     summary="Import or create a new lead in the social CRM",
 )
-def create_lead(
+async def create_lead(
     payload: LeadCreateRequest,
     service: OutreachService = Depends(get_outreach_service),
 ) -> LeadResponse:
-    lead = service.create_lead(payload.to_command())
+    lead = await service.create_lead(payload.to_command())
     return LeadResponse.model_validate(lead)
 
 
@@ -64,7 +64,7 @@ def create_lead(
     status_code=status.HTTP_200_OK,
     summary="List and filter tracked leads",
 )
-def list_leads(
+async def list_leads(
     platform: PlatformType | None = Query(default=None, description="Filter by platform"),
     stage: LeadStage | None = Query(default=None, description="Filter by CRM relationship stage"),
     tier: LeadTier | None = Query(default=None, description="Filter by audience sizing tier"),
@@ -72,7 +72,7 @@ def list_leads(
     offset: int = Query(default=0, ge=0),
     service: OutreachService = Depends(get_outreach_service),
 ) -> list[LeadResponse]:
-    leads = service.list_leads(
+    leads = await service.list_leads(
         platform=platform,
         stage=stage,
         tier=tier,
@@ -88,11 +88,11 @@ def list_leads(
     status_code=status.HTTP_200_OK,
     summary="Get a lead by ID",
 )
-def get_lead(
+async def get_lead(
     lead_id: UUID,
     service: OutreachService = Depends(get_outreach_service),
 ) -> LeadResponse:
-    lead = service.get_lead_by_id_or_raise(lead_id)
+    lead = await service.get_lead_by_id_or_raise(lead_id)
     return LeadResponse.model_validate(lead)
 
 
@@ -102,12 +102,12 @@ def get_lead(
     status_code=status.HTTP_200_OK,
     summary="Update lead metadata or relationship stage",
 )
-def update_lead(
+async def update_lead(
     lead_id: UUID,
     payload: LeadUpdateRequest,
     service: OutreachService = Depends(get_outreach_service),
 ) -> LeadResponse:
-    lead = service.update_lead(payload.to_command(lead_id))
+    lead = await service.update_lead(payload.to_command(lead_id))
     return LeadResponse.model_validate(lead)
 
 
@@ -116,11 +116,11 @@ def update_lead(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a lead and their message history",
 )
-def delete_lead(
+async def delete_lead(
     lead_id: UUID,
     service: OutreachService = Depends(get_outreach_service),
 ) -> None:
-    service.delete_lead(lead_id)
+    await service.delete_lead(lead_id)
 
 
 # =============================================================================
@@ -134,11 +134,11 @@ def delete_lead(
     status_code=status.HTTP_201_CREATED,
     summary="Create a new cold outreach campaign",
 )
-def create_campaign(
+async def create_campaign(
     payload: OutreachCampaignCreateRequest,
     service: OutreachService = Depends(get_outreach_service),
 ) -> OutreachCampaignResponse:
-    campaign = service.create_campaign(payload.to_command())
+    campaign = await service.create_campaign(payload.to_command())
     return OutreachCampaignResponse.model_validate(campaign)
 
 
@@ -148,11 +148,11 @@ def create_campaign(
     status_code=status.HTTP_200_OK,
     summary="List all outreach campaigns",
 )
-def list_campaigns(
+async def list_campaigns(
     is_active: bool | None = Query(default=None, description="Filter active status"),
     service: OutreachService = Depends(get_outreach_service),
 ) -> list[OutreachCampaignResponse]:
-    campaigns = service.list_campaigns(is_active=is_active)
+    campaigns = await service.list_campaigns(is_active=is_active)
     return [OutreachCampaignResponse.model_validate(c) for c in campaigns]
 
 
@@ -162,11 +162,11 @@ def list_campaigns(
     status_code=status.HTTP_200_OK,
     summary="Get an outreach campaign by ID",
 )
-def get_campaign(
+async def get_campaign(
     campaign_id: UUID,
     service: OutreachService = Depends(get_outreach_service),
 ) -> OutreachCampaignResponse:
-    campaign = service.get_campaign_by_id_or_raise(campaign_id)
+    campaign = await service.get_campaign_by_id_or_raise(campaign_id)
     return OutreachCampaignResponse.model_validate(campaign)
 
 
@@ -176,12 +176,12 @@ def get_campaign(
     status_code=status.HTTP_200_OK,
     summary="Update outreach campaign settings or template",
 )
-def update_campaign(
+async def update_campaign(
     campaign_id: UUID,
     payload: OutreachCampaignUpdateRequest,
     service: OutreachService = Depends(get_outreach_service),
 ) -> OutreachCampaignResponse:
-    campaign = service.update_campaign(payload.to_command(campaign_id))
+    campaign = await service.update_campaign(payload.to_command(campaign_id))
     return OutreachCampaignResponse.model_validate(campaign)
 
 
@@ -190,11 +190,11 @@ def update_campaign(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete an outreach campaign",
 )
-def delete_campaign(
+async def delete_campaign(
     campaign_id: UUID,
     service: OutreachService = Depends(get_outreach_service),
 ) -> None:
-    service.delete_campaign(campaign_id)
+    await service.delete_campaign(campaign_id)
 
 
 # =============================================================================
@@ -208,11 +208,11 @@ def delete_campaign(
     status_code=status.HTTP_201_CREATED,
     summary="Stage a cold message behind a human approval gate",
 )
-def stage_message(
+async def stage_message(
     payload: MessageStageRequest,
     service: OutreachService = Depends(get_outreach_service),
 ) -> OutreachMessageResponse:
-    message = service.stage_message(payload.to_command())
+    message = await service.stage_message(payload.to_command())
     return OutreachMessageResponse.model_validate(message)
 
 
@@ -222,14 +222,14 @@ def stage_message(
     status_code=status.HTTP_200_OK,
     summary="List staged, approved, or dispatched cold messages",
 )
-def list_messages(
+async def list_messages(
     lead_id: UUID | None = Query(default=None, description="Filter by lead ID"),
     campaign_id: UUID | None = Query(default=None, description="Filter by campaign ID"),
     status: OutreachMessageStatus | None = Query(default=None, description="Filter by message review status"),
     limit: int = Query(default=50, ge=1, le=200),
     service: OutreachService = Depends(get_outreach_service),
 ) -> list[OutreachMessageResponse]:
-    messages = service.list_messages(
+    messages = await service.list_messages(
         lead_id=lead_id,
         campaign_id=campaign_id,
         status=status,
@@ -244,11 +244,11 @@ def list_messages(
     status_code=status.HTTP_200_OK,
     summary="Get a cold outreach message by ID",
 )
-def get_message(
+async def get_message(
     message_id: UUID,
     service: OutreachService = Depends(get_outreach_service),
 ) -> OutreachMessageResponse:
-    message = service.get_message_by_id_or_raise(message_id)
+    message = await service.get_message_by_id_or_raise(message_id)
     return OutreachMessageResponse.model_validate(message)
 
 
@@ -258,12 +258,12 @@ def get_message(
     status_code=status.HTTP_200_OK,
     summary="Approve or reject a staged cold message",
 )
-def review_message(
+async def review_message(
     message_id: UUID,
     payload: MessageReviewRequest,
     service: OutreachService = Depends(get_outreach_service),
 ) -> OutreachMessageResponse:
-    message = service.review_message(payload.to_command(message_id))
+    message = await service.review_message(payload.to_command(message_id))
     return OutreachMessageResponse.model_validate(message)
 
 
@@ -272,13 +272,16 @@ def review_message(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a draft, staged, or rejected message",
 )
-def delete_message(
+async def delete_message(
     message_id: UUID,
     service: OutreachService = Depends(get_outreach_service),
 ) -> None:
-    service.delete_message(message_id)
+    await service.delete_message(message_id)
 
 
+# =============================================================================
+# Hardened Browser Scouting & Sweep Endpoints (Decoupled from DB Pool)
+# =============================================================================
 
 
 @router.post(
@@ -289,11 +292,16 @@ def delete_message(
 )
 async def scout_creators_endpoint(
     payload: ScoutLeadsRequest,
-    service: OutreachService = Depends(get_outreach_service),
-    db: Session = Depends(get_db_session),
 ) -> ScoutLeadsResponse:
-    account = AccountService(db).get_by_id_or_raise(payload.account_id)
+    """
+    Decoupled DB access: Reads account first, releases connection during
+    long browser run, then opens a fresh session to batch-insert results.
+    """
+    # 1. Fetch account in short-lived session
+    async with async_session_factory() as db:
+        account = await AccountService(db).get_by_id_or_raise(payload.account_id)
 
+    # 2. Run long Playwright browser exploration (no open DB transaction)
     raw_report = await scout_influencer_leads(
         account=account,
         niche_or_query=payload.niche_or_query,
@@ -301,7 +309,6 @@ async def scout_creators_endpoint(
         headless=True,
     )
 
-    # Parse structured JSON array from agent's response
     parsed_leads: list[dict[str, Any]] = []
     json_match = re.search(r"\[[\s\S]*\]", raw_report)
     if json_match:
@@ -310,32 +317,35 @@ async def scout_creators_endpoint(
         except Exception:
             pass
 
+    # 3. Batch-save verified leads in a fresh transaction
     imported_count = 0
     if payload.auto_import and parsed_leads:
-        for item in parsed_leads:
-            handle = str(item.get("handle", "")).lstrip("@").strip()
-            if not handle:
-                continue
-            existing = service.get_lead_by_platform_and_handle(account.platform, handle)
-            if existing:
-                continue
+        async with async_session_factory() as db:
+            service = OutreachService(db)
+            for item in parsed_leads:
+                handle = str(item.get("handle", "")).lstrip("@").strip()
+                if not handle:
+                    continue
+                existing = await service.get_lead_by_platform_and_handle(account.platform, handle)
+                if existing:
+                    continue
 
-            try:
-                service.create_lead(
-                    CreateLeadCommand(
-                        platform=account.platform,
-                        handle=handle,
-                        display_name=item.get("display_name"),
-                        bio=item.get("bio"),
-                        follower_count=item.get("follower_count"),
-                        tier=LeadTier.MICRO if (item.get("follower_count") or 0) > 10000 else LeadTier.NANO,
-                        tags=[payload.niche_or_query.lstrip("#")],
-                        notes=f"AI Scout fit: {item.get('reason', 'N/A')}",
+                try:
+                    await service.create_lead(
+                        CreateLeadCommand(
+                            platform=account.platform,
+                            handle=handle,
+                            display_name=item.get("display_name"),
+                            bio=item.get("bio"),
+                            follower_count=item.get("follower_count"),
+                            tier=LeadTier.MICRO if (item.get("follower_count") or 0) > 10000 else LeadTier.NANO,
+                            tags=[payload.niche_or_query.lstrip("#")],
+                            notes=f"AI Scout fit: {item.get('reason', 'N/A')}",
+                        )
                     )
-                )
-                imported_count += 1
-            except Exception:
-                continue
+                    imported_count += 1
+                except Exception:
+                    continue
 
     return ScoutLeadsResponse(
         niche=payload.niche_or_query,
@@ -352,10 +362,14 @@ async def scout_creators_endpoint(
 )
 async def sweep_inbox_endpoint(
     account_id: UUID,
-    db: Session = Depends(get_db_session),
 ) -> dict[str, Any]:
-    account = AccountService(db).get_by_id_or_raise(account_id)
+    # 1. Fetch account in short-lived session
+    async with async_session_factory() as db:
+        account = await AccountService(db).get_by_id_or_raise(account_id)
+
+    # 2. Run browser sweep without holding DB connection
     summary = await read_and_summarize_inbox(account=account, headless=True)
+
     return {
         "account": account.handle,
         "platform": account.platform.value,

@@ -1,7 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy.orm import Session
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import CampaignStatus, PlatformType, PostStatus
 from app.modules.accounts.commands import CreateAccountCommand
@@ -18,9 +19,10 @@ from app.platforms.instagram.adapter import InstagramAdapter
 from app.platforms.registry import PlatformRegistry
 
 
-def test_platform_registry_to_campaign_dispatch_pipeline(db_session: Session, tmp_path: Path):
+@pytest.mark.anyio
+async def test_platform_registry_to_campaign_dispatch_pipeline(db_session: AsyncSession, tmp_path: Path):
     """
-    Verifies the complete integration flow:
+    Verifies the complete integration flow asynchronously:
     1. Account is registered in the DB.
     2. PlatformRegistry resolves the concrete InstagramAdapter.
     3. Campaign post is queued.
@@ -30,7 +32,7 @@ def test_platform_registry_to_campaign_dispatch_pipeline(db_session: Session, tm
     campaign_service = CampaignService(db_session)
 
     # 1. Connect Account
-    account = account_service.create_account(
+    account = await account_service.create_account(
         CreateAccountCommand(
             platform=PlatformType.INSTAGRAM,
             handle="brand_growth",
@@ -46,10 +48,10 @@ def test_platform_registry_to_campaign_dispatch_pipeline(db_session: Session, tm
     assert adapter.account.id == account.id
 
     # 3. Queue Campaign Post
-    campaign = campaign_service.create_campaign(
+    campaign = await campaign_service.create_campaign(
         CreateCampaignCommand(name="Integration Campaign", status=CampaignStatus.ACTIVE)
     )
-    scheduled_post = campaign_service.queue_post(
+    scheduled_post = await campaign_service.queue_post(
         QueuePostCommand(
             campaign_id=campaign.id,
             account_id=account.id,
@@ -68,7 +70,7 @@ def test_platform_registry_to_campaign_dispatch_pipeline(db_session: Session, tm
     )
 
     # 5. Record Delivery via CampaignService
-    published_post = campaign_service.record_delivery(
+    published_post = await campaign_service.record_delivery(
         RecordPostDeliveryCommand(
             post_id=scheduled_post.id,
             platform_post_id=simulated_result.platform_post_id,
@@ -77,12 +79,12 @@ def test_platform_registry_to_campaign_dispatch_pipeline(db_session: Session, tm
     )
 
     # 6. Increment Sender Account Post Activity
-    account_service.record_post_activity(account.id)
+    await account_service.record_post_activity(account.id)
 
     # Assertions
     assert published_post.status == PostStatus.PUBLISHED
     assert published_post.platform_post_id == "ig_post_987654321"
     assert published_post.published_at is not None
 
-    db_session.refresh(account)
+    await db_session.refresh(account)
     assert account.daily_posts_sent == 1

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Sidebar, type SidebarTab } from '../../components/Sidebar';
 import { OverviewPage } from '../overview/OverviewPage';
 import { ChatPage } from '../chat/ChatPage';
@@ -11,12 +12,6 @@ import { BrandKitPage } from '../brand/BrandKitPage';
 import { ActionStudioPage } from '../studio/ActionStudioPage';
 import { SystemHealthPage } from '../system/SystemHealthPage';
 import { type ChatSession } from '../../api/client';
-import { type ActiveView } from '../../components/Navbar';
-
-interface DashboardPageProps {
-  initialTab?: ActiveView;
-  onBackToHome?: () => void;
-}
 
 const VALID_SIDEBAR_TABS: SidebarTab[] = [
   'overview',
@@ -30,36 +25,37 @@ const VALID_SIDEBAR_TABS: SidebarTab[] = [
   'system',
 ];
 
-export const DashboardPage: React.FC<DashboardPageProps> = ({ initialTab }) => {
-  const [activeTab, setActiveTab] = useState<SidebarTab | null>(() => {
-    if (initialTab && VALID_SIDEBAR_TABS.includes(initialTab as SidebarTab)) {
-      return initialTab as SidebarTab;
-    }
-    return 'overview';
-  });
+export const DashboardPage: React.FC = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { sessionId } = useParams<{ sessionId?: string }>();
 
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  // Determine active tab directly from URL!
+  const currentPath = location.pathname.replace(/^\//, '').split('/')[0];
+  const isChatRoute = location.pathname.startsWith('/chat');
+  const activeTab: SidebarTab | null = isChatRoute
+    ? null
+    : VALID_SIDEBAR_TABS.includes(currentPath as SidebarTab)
+    ? (currentPath as SidebarTab)
+    : 'overview';
+
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const handleSelectTab = (tab: SidebarTab) => {
-    setSelectedSessionId(null);
-    setActiveTab(tab);
+    navigate(`/${tab}`);
   };
 
   const handleNewChat = () => {
-    setSelectedSessionId(null);
-    setActiveTab(null);
+    navigate('/chat');
   };
 
-  const handleSelectSession = (sessionId: string) => {
-    setSelectedSessionId(sessionId);
-    setActiveTab(null);
+  const handleSelectSession = (id: string) => {
+    navigate(`/chat/${id}`);
   };
 
   const handleSessionCreated = (newSession: ChatSession) => {
-    setSelectedSessionId(newSession.id);
-    setActiveTab(null);
+    navigate(`/chat/${newSession.id}`, { replace: true });
     setRefreshTrigger((prev) => prev + 1);
   };
 
@@ -67,7 +63,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ initialTab }) => {
     if (activeTab === null) {
       return (
         <ChatPage
-          sessionId={selectedSessionId}
+          sessionId={sessionId || null}
           onSessionCreated={handleSessionCreated}
         />
       );
@@ -108,7 +104,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ initialTab }) => {
         key={refreshTrigger}
         activeTab={activeTab}
         onSelectTab={handleSelectTab}
-        selectedSessionId={selectedSessionId}
+        selectedSessionId={sessionId || null}
         onSelectSession={handleSelectSession}
         onNewChat={handleNewChat}
         isCollapsed={isSidebarCollapsed}
@@ -125,12 +121,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ initialTab }) => {
         <img
           src="/chat-bg.png"
           alt="Dither Sky Background"
-          className="absolute inset-0 w-full h-full object-cover object-top pointer-events-none z-0 select-none opacity-100"
+          className="absolute inset-0 w-full h-full object-cover object-top pointer-events-none select-none opacity-100"
           style={{ imageRendering: 'pixelated' }}
         />
 
-        {/* Dynamic View Router */}
-        <div className="relative h-full flex flex-col z-10">
+        {/* Dynamic View */}
+        <div className="relative h-full flex flex-col">
           {renderActiveView()}
         </div>
       </main>

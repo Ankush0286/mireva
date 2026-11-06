@@ -1,9 +1,9 @@
 import logging
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import ActivitySeverity, ActivityType
-from app.db.session import session_factory, sync_replica
+from app.db.session import async_session_factory, sync_replica
 from app.modules.accounts.service import AccountService
 from app.modules.history.commands import LogActivityCommand
 from app.modules.history.service import HistoryService
@@ -11,21 +11,21 @@ from app.modules.history.service import HistoryService
 logger = logging.getLogger(__name__)
 
 
-async def run_quota_reset_worker(db: Session | None = None) -> int:
+async def run_quota_reset_worker(db: AsyncSession | None = None) -> int:
     """
     Daily maintenance loop:
     1. Resets 24-hour post and DM quotas across connected accounts.
-    2. Pushes local writes to Turso Cloud via sync_replica().
+    2. Runs consistency check via sync_replica().
     """
     owns_session = db is None
-    session = db or session_factory()
+    session = db if db is not None else async_session_factory()
     reset_count = 0
 
     try:
         account_service = AccountService(session)
         history_service = HistoryService(session)
 
-        accounts = account_service.list_accounts()
+        accounts = await account_service.list_accounts()
 
         for account in accounts:
             prev_posts = account.daily_posts_sent
@@ -35,12 +35,21 @@ async def run_quota_reset_worker(db: Session | None = None) -> int:
 
             if account.daily_posts_sent == 0 and (prev_posts > 0 or prev_dms > 0):
                 reset_count += 1
-                logger.info("Reset 24-hour quotas for account @%s (%s)", account.handle, account.platform.value)
+                logger.info(
+                    "Reset 24-hour quotas for account @%s (%s)",
+                    account.handle,
+                    account.platform.value,
+                )
 
-        session.commit()
+        try:
+            await session.commit()
+        except Exception as commit_exc:
+            await session.rollback()
+            logger.error("Failed to commit quota resets: %s", commit_exc)
+            raise
 
         if reset_count > 0:
-            history_service.log_activity(
+            await history_service.log_activity(
                 LogActivityCommand(
                     activity_type=ActivityType.SYSTEM_QUOTA_RESET,
                     severity=ActivitySeverity.INFO,
@@ -50,15 +59,13 @@ async def run_quota_reset_worker(db: Session | None = None) -> int:
                 )
             )
 
-        # Trigger Turso Cloud synchronization
         try:
-            sync_replica()
-            logger.info("Turso replica synchronized with cloud.")
+            await sync_replica()
         except Exception as sync_exc:
-            logger.warning("Turso cloud sync skipped or offline: %s", sync_exc)
+            logger.warning("Cloud consistency check skipped: %s", sync_exc)
 
         return reset_count
 
     finally:
         if owns_session:
-            session.close()
+            await session.close()

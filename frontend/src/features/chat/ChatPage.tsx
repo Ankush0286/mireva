@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useLocation } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Megaphone,
   Search,
@@ -7,27 +9,39 @@ import {
   Check,
   RotateCcw,
   ArrowUpRight,
-} from 'lucide-react';
+} from "lucide-react";
 import {
   api,
   type ChatMessage,
   type ToolExecutionLog,
   type ChatSession,
-} from '../../api/client';
-import { AgentSteps } from '../../components/AgentSteps';
-import { fromToolExecutionLog } from '../../components/agentStepsUtils';
-import { LoadingState } from '../../components/LoadingState';
-import { PromptComposer, type ModelOption } from '../../components/PromptComposer';
-import { StreamingText, type SuggestedPrompt } from '../../components/StreamingText';
-import { ReasoningTrace, type ReasoningStep } from '../../components/ReasoningTrace';
+} from "../../api/client";
+import { queryKeys } from "../../api/queryKeys";
+import { AgentSteps } from "../../components/AgentSteps";
+import { fromToolExecutionLog } from "../../components/agentStepsUtils";
+import { LoadingState } from "../../components/LoadingState";
+import {
+  PromptComposer,
+  type ModelOption,
+} from "../../components/PromptComposer";
+import {
+  StreamingText,
+  type SuggestedPrompt,
+} from "../../components/StreamingText";
+import {
+  ReasoningTrace,
+  type ReasoningStep,
+} from "../../components/ReasoningTrace";
 
 // ============================================================================
 // Pure Module-Level Helpers (Outside render scope for React Compiler compliance)
 // ============================================================================
 
-const generateMessageId = (role: 'user' | 'assistant') => `${role}-${Date.now()}`;
+const generateMessageId = (role: "user" | "assistant") =>
+  `${role}-${Date.now()}`;
 const getIsoTimestamp = () => new Date().toISOString();
-const getHighResNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+const getHighResNow = () =>
+  typeof performance !== "undefined" ? performance.now() : Date.now();
 
 function parseModelOutput(rawContent: string): {
   reasoningSteps: ReasoningStep[];
@@ -35,34 +49,36 @@ function parseModelOutput(rawContent: string): {
   isCurrentlyThinking: boolean;
 } {
   if (!rawContent) {
-    return { reasoningSteps: [], cleanAnswer: '', isCurrentlyThinking: false };
+    return { reasoningSteps: [], cleanAnswer: "", isCurrentlyThinking: false };
   }
 
-  const hasOpenThink = rawContent.includes('<think>');
-  const hasCloseThink = rawContent.includes('</think>');
+  const hasOpenThink = rawContent.includes("<think>");
+  const hasCloseThink = rawContent.includes("</think>");
 
   if (hasOpenThink && !hasCloseThink) {
-    const partialThought = rawContent.replace('<think>', '').trim();
+    const partialThought = rawContent.replace("<think>", "").trim();
     const steps = partialThought
-      .split('\n')
+      .split("\n")
       .map((s) => s.trim())
       .filter(Boolean)
       .map((content, idx) => ({ id: `think-${idx}`, content }));
 
     return {
       reasoningSteps: steps,
-      cleanAnswer: '',
+      cleanAnswer: "",
       isCurrentlyThinking: true,
     };
   }
 
   if (hasOpenThink && hasCloseThink) {
     const match = rawContent.match(/<think>([\s\S]*?)<\/think>/);
-    const thoughtContent = match ? match[1].trim() : '';
-    const cleanAnswer = rawContent.replace(/<think>[\s\S]*?<\/think>/, '').trim();
+    const thoughtContent = match ? match[1].trim() : "";
+    const cleanAnswer = rawContent
+      .replace(/<think>[\s\S]*?<\/think>/, "")
+      .trim();
 
     const steps = thoughtContent
-      .split('\n')
+      .split("\n")
       .map((s) => s.trim())
       .filter(Boolean)
       .map((content, idx) => ({ id: `think-${idx}`, content }));
@@ -97,65 +113,67 @@ interface ChatPageProps {
 
 const STARTER_CARDS = [
   {
-    id: 'campaign',
-    title: 'Create a marketing campaign',
-    subtitle: 'Multi-channel launch strategy',
+    id: "campaign",
+    title: "Create a marketing campaign",
+    subtitle: "Multi-channel launch strategy",
     prompt:
-      'Draft a high-converting multi-channel launch campaign for our brand. Check my connected accounts first.',
+      "Draft a high-converting multi-channel launch campaign for our brand. Check my connected accounts first.",
     icon: Megaphone,
-    iconBg: 'bg-[#F5F0FF]',
-    iconColor: 'text-[#7C3AED]',
-    waveId: 'purpleWave',
+    iconBg: "bg-[#F5F0FF]",
+    iconColor: "text-[#7C3AED]",
+    waveId: "purpleWave",
     stops: [
-      { offset: '0%', color: '#C084FC', opacity: 0.85 },
-      { offset: '60%', color: '#E9D5FF', opacity: 0.55 },
-      { offset: '100%', color: '#FAF5FF', opacity: 0.05 },
+      { offset: "0%", color: "#C084FC", opacity: 0.85 },
+      { offset: "60%", color: "#E9D5FF", opacity: 0.55 },
+      { offset: "100%", color: "#FAF5FF", opacity: 0.05 },
     ],
   },
   {
-    id: 'social',
-    title: 'Write social media content',
-    subtitle: 'High-hook posts & threads',
+    id: "social",
+    title: "Write social media content",
+    subtitle: "High-hook posts & threads",
     prompt:
-      'Write 3 punchy social media posts with strong curiosity hooks and clean formatting.',
+      "Write 3 punchy social media posts with strong curiosity hooks and clean formatting.",
     icon: Layers,
-    iconBg: 'bg-[#EFF6FF]',
-    iconColor: 'text-[#2563EB]',
-    waveId: 'blueWave',
+    iconBg: "bg-[#EFF6FF]",
+    iconColor: "text-[#2563EB]",
+    waveId: "blueWave",
     stops: [
-      { offset: '0%', color: '#60A5FA', opacity: 0.85 },
-      { offset: '60%', color: '#BAE6FD', opacity: 0.55 },
-      { offset: '100%', color: '#F0F9FF', opacity: 0.05 },
+      { offset: "0%", color: "#60A5FA", opacity: 0.85 },
+      { offset: "60%", color: "#BAE6FD", opacity: 0.55 },
+      { offset: "100%", color: "#F0F9FF", opacity: 0.05 },
     ],
   },
   {
-    id: 'seo',
-    title: 'Improve my SEO & Triggers',
-    subtitle: 'Competitor keyword radar',
+    id: "seo",
+    title: "Improve my SEO & Triggers",
+    subtitle: "Competitor keyword radar",
     prompt:
-      'Audit my competitor watch list and suggest high-intent keyword trigger rules we should monitor.',
+      "Audit my competitor watch list and suggest high-intent keyword trigger rules we should monitor.",
     icon: Search,
-    iconBg: 'bg-[#ECFDF5]',
-    iconColor: 'text-[#059669]',
-    waveId: 'greenWave',
+    iconBg: "bg-[#ECFDF5]",
+    iconColor: "text-[#059669]",
+    waveId: "greenWave",
     stops: [
-      { offset: '0%', color: '#34D399', opacity: 0.85 },
-      { offset: '60%', color: '#A7F3D0', opacity: 0.55 },
-      { offset: '100%', color: '#ECFDF5', opacity: 0.05 },
+      { offset: "0%", color: "#34D399", opacity: 0.85 },
+      { offset: "60%", color: "#A7F3D0", opacity: 0.55 },
+      { offset: "100%", color: "#ECFDF5", opacity: 0.05 },
     ],
   },
 ];
 
 const DEFAULT_FOLLOW_UPS: SuggestedPrompt[] = [
   {
-    id: 'fu-1',
-    label: 'Check my connected account quotas and health',
-    prompt: 'Check the health and remaining daily quotas of my connected accounts.',
+    id: "fu-1",
+    label: "Check my connected account quotas and health",
+    prompt:
+      "Check the health and remaining daily quotas of my connected accounts.",
   },
   {
-    id: 'fu-2',
-    label: 'Queue the best post draft for tomorrow morning',
-    prompt: 'Schedule the strongest post draft from above for tomorrow at 10:00 AM.',
+    id: "fu-2",
+    label: "Queue the best post draft for tomorrow morning",
+    prompt:
+      "Schedule the strongest post draft from above for tomorrow at 10:00 AM.",
   },
 ];
 
@@ -163,9 +181,14 @@ const DEFAULT_FOLLOW_UPS: SuggestedPrompt[] = [
 // Main ChatPage Component
 // ============================================================================
 
-export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated }) => {
+export const ChatPage: React.FC<ChatPageProps> = ({
+  sessionId,
+  onSessionCreated,
+}) => {
+  const queryClient = useQueryClient();
+  const location = useLocation();
+
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
-  const [models, setModels] = useState<ModelOption[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -173,29 +196,27 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const isStreamingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const initialPromptHandled = useRef(false);
 
-  useEffect(() => {
-    api.copilot
-      .listModels()
-      .then((fetched) => {
-        if (fetched && fetched.length > 0) {
-          setModels(fetched);
-        }
-      })
-      .catch((err) => {
-        console.debug('Using default local model options:', err);
-      });
-  }, []);
+  // 1. TanStack Query for Models
+  const { data: models = [] } = useQuery<ModelOption[]>({
+    queryKey: ["copilot", "models"],
+    queryFn: async () => {
+      const fetched = await api.copilot.listModels();
+      return fetched && fetched.length > 0 ? fetched : [];
+    },
+    staleTime: 1000 * 60 * 30, // 30 minutes cache
+  });
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
     scrollToBottom();
   }, [messages, isStreaming]);
 
-  // Hydrate conversation history safely without synchronous cascading render warnings
+  // 2. Hydrate History when sessionId changes
   useEffect(() => {
     let isMounted = true;
 
@@ -218,7 +239,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
       .then(([historyMessages, toolLogs]) => {
         if (!isMounted) return;
         const mapped: ExtendedChatMessage[] = historyMessages.map((msg) => {
-          if (msg.role === 'assistant') {
+          if (msg.role === "assistant") {
             const turnTools = toolLogs.filter((t) => t.message_id === msg.id);
             return {
               ...msg,
@@ -231,7 +252,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
         setMessages(mapped);
       })
       .catch((err) => {
-        console.error('Failed to load chat history:', err);
+        console.error("Failed to load chat history:", err);
       })
       .finally(() => {
         if (isMounted) setLoadingHistory(false);
@@ -254,128 +275,149 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
     setIsStreaming(false);
   };
 
-  const handleSendMessage = async (
-    promptText: string,
-    modelId?: string,
-    thinking?: boolean
-  ) => {
-    const textToSend = promptText.trim();
-    if (!textToSend || isStreaming) return;
+  // 3. handleSendMessage wrapped in useCallback before any effect reads it
+  const handleSendMessage = useCallback(
+    async (promptText: string, modelId?: string, thinking?: boolean) => {
+      const textToSend = promptText.trim();
+      if (!textToSend || isStreaming) return;
 
-    let targetSessionId = sessionId;
+      let targetSessionId = sessionId;
 
-    if (!targetSessionId) {
-      try {
-        const newSession = await api.copilot.createSession(
-          textToSend.slice(0, 36) || 'New Marketing Session'
-        );
-        targetSessionId = newSession.id;
-        onSessionCreated(newSession);
-      } catch (err) {
-        console.error('Failed to create new session:', err);
-        return;
-      }
-    }
-
-    isStreamingRef.current = true;
-    setIsStreaming(true);
-
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-    const turnStartTime = getHighResNow();
-
-    const userMsg: ExtendedChatMessage = {
-      id: generateMessageId('user'),
-      session_id: targetSessionId,
-      role: 'user',
-      content: textToSend,
-      created_at: getIsoTimestamp(),
-    };
-
-    const assistantMsgId = generateMessageId('assistant');
-    const assistantMsg: ExtendedChatMessage = {
-      id: assistantMsgId,
-      session_id: targetSessionId,
-      role: 'assistant',
-      content: '',
-      created_at: getIsoTimestamp(),
-      turnTools: [],
-    };
-
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
-
-    let firstTokenRecorded = false;
-
-    try {
-      await api.copilot.streamChat(
-        targetSessionId,
-        textToSend,
-        (token: string) => {
-          const elapsedThinking = !firstTokenRecorded
-            ? Math.round(getHighResNow() - turnStartTime)
-            : undefined;
-          firstTokenRecorded = true;
-
-          setMessages((prev) => {
-            const updated = [...prev];
-            const lastIndex = updated.length - 1;
-            if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
-              updated[lastIndex] = {
-                ...updated[lastIndex],
-                content: updated[lastIndex].content + token,
-                thinkingDurationMs:
-                  elapsedThinking ?? updated[lastIndex].thinkingDurationMs,
-              };
-              return updated;
-            }
-            return updated;
+      if (!targetSessionId) {
+        try {
+          const newSession = await api.copilot.createSession(
+            textToSend.slice(0, 36) || "New Marketing Session",
+          );
+          targetSessionId = newSession.id;
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.copilot.sessions,
           });
-        },
-        (realtimeTools: ToolExecutionLog[]) => {
-          setMessages((prev) => {
-            const updated = [...prev];
-            const lastIndex = updated.length - 1;
-            if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
-              updated[lastIndex] = {
-                ...updated[lastIndex],
-                turnTools: realtimeTools,
-              };
-            }
-            return updated;
-          });
-        },
-        abortController.signal,
-        modelId,
-        thinking
-      );
-    } catch (err: any) {
-      if (err?.name === 'AbortError') return;
-      console.error('Streaming error:', err);
-      const errMsg = err?.message || 'Agent communication error';
-      setMessages((prev) => {
-        const updated = [...prev];
-        const lastIndex = updated.length - 1;
-        if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
-          updated[lastIndex] = {
-            ...updated[lastIndex],
-            content: `⚠️ ${errMsg}. Please verify OPENROUTER_API_KEY is configured in backend/.env`,
-          };
+          onSessionCreated(newSession);
+        } catch (err) {
+          console.error("Failed to create new session:", err);
+          return;
         }
-        return updated;
-      });
-    } finally {
-      isStreamingRef.current = false;
-      setIsStreaming(false);
-      abortControllerRef.current = null;
+      }
+
+      isStreamingRef.current = true;
+      setIsStreaming(true);
+
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+      const turnStartTime = getHighResNow();
+
+      const userMsg: ExtendedChatMessage = {
+        id: generateMessageId("user"),
+        session_id: targetSessionId,
+        role: "user",
+        content: textToSend,
+        created_at: getIsoTimestamp(),
+      };
+
+      const assistantMsgId = generateMessageId("assistant");
+      const assistantMsg: ExtendedChatMessage = {
+        id: assistantMsgId,
+        session_id: targetSessionId,
+        role: "assistant",
+        content: "",
+        created_at: getIsoTimestamp(),
+        turnTools: [],
+      };
+
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+      let firstTokenRecorded = false;
+
+      try {
+        await api.copilot.streamChat(
+          targetSessionId,
+          textToSend,
+          (token: string) => {
+            const elapsedThinking = !firstTokenRecorded
+              ? Math.round(getHighResNow() - turnStartTime)
+              : undefined;
+            firstTokenRecorded = true;
+
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastIndex = updated.length - 1;
+              if (lastIndex >= 0 && updated[lastIndex].role === "assistant") {
+                updated[lastIndex] = {
+                  ...updated[lastIndex],
+                  content: updated[lastIndex].content + token,
+                  thinkingDurationMs:
+                    elapsedThinking ?? updated[lastIndex].thinkingDurationMs,
+                };
+                return updated;
+              }
+              return updated;
+            });
+          },
+          (realtimeTools: ToolExecutionLog[]) => {
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastIndex = updated.length - 1;
+              if (lastIndex >= 0 && updated[lastIndex].role === "assistant") {
+                updated[lastIndex] = {
+                  ...updated[lastIndex],
+                  turnTools: realtimeTools,
+                };
+              }
+              return updated;
+            });
+          },
+          abortController.signal,
+          modelId,
+          thinking,
+        );
+
+        queryClient.invalidateQueries({ queryKey: queryKeys.copilot.sessions });
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.copilot.messages(targetSessionId),
+        });
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.copilot.tools(targetSessionId),
+        });
+      } catch (err: any) {
+        if (err?.name === "AbortError") return;
+        console.error("Streaming error:", err);
+        const errMsg = err?.message || "Agent communication error";
+        setMessages((prev) => {
+          const updated = [...prev];
+          const lastIndex = updated.length - 1;
+          if (lastIndex >= 0 && updated[lastIndex].role === "assistant") {
+            updated[lastIndex] = {
+              ...updated[lastIndex],
+              content: `⚠️ ${errMsg}. Please verify FIREWORKS_API_KEY / OPENROUTER_API_KEY in backend/.env`,
+            };
+          }
+          return updated;
+        });
+      } finally {
+        isStreamingRef.current = false;
+        setIsStreaming(false);
+        abortControllerRef.current = null;
+      }
+    },
+    [sessionId, isStreaming, queryClient, onSessionCreated],
+  );
+
+  // 4. Auto-Send Initial Prompt passed from Landing Page
+  useEffect(() => {
+    const passedPrompt = (location.state as any)?.initialPrompt;
+    if (passedPrompt && !initialPromptHandled.current) {
+      initialPromptHandled.current = true;
+      handleSendMessage(passedPrompt);
+      window.history.replaceState({}, document.title);
     }
-  };
+  }, [location.state, handleSendMessage]);
 
   return (
     <div className="relative h-full flex flex-col justify-between max-w-4xl mx-auto w-full font-sans select-none text-[#09122A] overflow-hidden">
       {/* 1. Main Conversation Stream */}
       <div
         className={`flex-1 overflow-y-auto px-3 sm:px-6 py-4 scrollbar-none flex flex-col ${
-          messages.length === 0 ? 'justify-center' : 'justify-start'
+          messages.length === 0 ? "justify-center" : "justify-start"
         }`}
       >
         {loadingHistory && (
@@ -389,7 +431,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
           <div className="flex flex-col items-center justify-center text-center my-auto">
             <div className="relative inline-block mb-2.5">
               <h1 className="text-[36px] sm:text-[44px] font-bold text-[#09122A] tracking-[-0.025em] leading-[1.12]">
-                What can I help you{' '}
+                What can I help you{" "}
                 <span className="relative inline-block font-serif italic font-normal text-[#0D2149] tracking-normal">
                   create today?
                   <svg
@@ -419,7 +461,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
             </div>
 
             <p className="text-[14.5px] text-[#475569] font-normal max-w-md mb-9 leading-relaxed">
-              Your AI marketing workspace is ready to turn ideas into results.
+              Your AI workspace for marketing that moves ideas forward.
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-3xl mb-2">
@@ -492,19 +534,30 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
         {!loadingHistory && messages.length > 0 && (
           <div className="space-y-6 w-full max-w-3xl mx-auto pb-6">
             {messages.map((msg, idx) => {
-              const isUser = msg.role === 'user';
+              const isUser = msg.role === "user";
               const isLastAssistant = !isUser && idx === messages.length - 1;
-              const hasTools = Boolean(msg.turnTools && msg.turnTools.length > 0);
+              const hasTools = Boolean(
+                msg.turnTools && msg.turnTools.length > 0,
+              );
 
               const { reasoningSteps, cleanAnswer, isCurrentlyThinking } =
                 !isUser
                   ? parseModelOutput(msg.content)
-                  : { reasoningSteps: [], cleanAnswer: msg.content, isCurrentlyThinking: false };
+                  : {
+                      reasoningSteps: [],
+                      cleanAnswer: msg.content,
+                      isCurrentlyThinking: false,
+                    };
 
               const hasRealReasoning = reasoningSteps.length > 0;
-              const hasTextContent = Boolean(cleanAnswer && cleanAnswer.trim().length > 0);
+              const hasTextContent = Boolean(
+                cleanAnswer && cleanAnswer.trim().length > 0,
+              );
               const isWaitingForStream =
-                isLastAssistant && isStreaming && !hasTextContent && !hasRealReasoning;
+                isLastAssistant &&
+                isStreaming &&
+                !hasTextContent &&
+                !hasRealReasoning;
 
               if (isUser) {
                 return (
@@ -538,14 +591,19 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
               }
 
               return (
-                <div key={msg.id} className="flex flex-col items-start space-y-2.5 w-full">
+                <div
+                  key={msg.id}
+                  className="flex flex-col items-start space-y-2.5 w-full"
+                >
                   {hasTools && (
-                    <AgentSteps steps={msg.turnTools!.map(fromToolExecutionLog)} />
+                    <AgentSteps
+                      steps={msg.turnTools!.map(fromToolExecutionLog)}
+                    />
                   )}
 
                   {hasRealReasoning && (
                     <ReasoningTrace
-                      status={isCurrentlyThinking ? 'thinking' : 'complete'}
+                      status={isCurrentlyThinking ? "thinking" : "complete"}
                       durationMs={msg.thinkingDurationMs}
                       steps={reasoningSteps}
                     />
@@ -555,8 +613,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
                     <LoadingState
                       label={
                         hasTools
-                          ? 'Synthesizing tool findings'
-                          : 'Formulating response'
+                          ? "Synthesizing tool findings"
+                          : "Formulating response"
                       }
                       variant="Drive"
                     />
@@ -568,7 +626,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
                         text={cleanAnswer}
                         streaming={isLastAssistant && isStreaming}
                         followUps={
-                          isLastAssistant && !isStreaming ? DEFAULT_FOLLOW_UPS : []
+                          isLastAssistant && !isStreaming
+                            ? DEFAULT_FOLLOW_UPS
+                            : []
                         }
                         onFollowUp={(item) =>
                           handleSendMessage(item.prompt || item.label)
@@ -586,8 +646,13 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
                             >
                               {copiedId === msg.id ? (
                                 <>
-                                  <Check size={13} className="text-emerald-600" />
-                                  <span className="text-emerald-600">Copied</span>
+                                  <Check
+                                    size={13}
+                                    className="text-emerald-600"
+                                  />
+                                  <span className="text-emerald-600">
+                                    Copied
+                                  </span>
                                 </>
                               ) : (
                                 <>
@@ -597,7 +662,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
                               )}
                             </button>
 
-                            {idx > 0 && messages[idx - 1]?.role === 'user' && (
+                            {idx > 0 && messages[idx - 1]?.role === "user" && (
                               <button
                                 type="button"
                                 onClick={() =>
@@ -615,8 +680,8 @@ export const ChatPage: React.FC<ChatPageProps> = ({ sessionId, onSessionCreated 
 
                           <span className="font-mono text-[10px] text-slate-300">
                             {new Date(msg.created_at).toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
+                              hour: "2-digit",
+                              minute: "2-digit",
                             })}
                           </span>
                         </div>

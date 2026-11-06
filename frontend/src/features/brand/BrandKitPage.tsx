@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
   Sparkles,
@@ -18,12 +20,11 @@ import {
   Smile,
 } from "lucide-react";
 import { api, type BrandKit } from "../../api/client";
+import { queryKeys } from "../../api/queryKeys";
 import { LoadingState } from "../../components/LoadingState";
 
 export const BrandKitPage: React.FC = () => {
-  const [brandKit, setBrandKit] = useState<BrandKit | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
+  const queryClient = useQueryClient();
   const [toast, setToast] = useState<{
     message: string;
     type: "success" | "error";
@@ -108,87 +109,69 @@ export const BrandKitPage: React.FC = () => {
     setKeyLinks(kit.key_links || []);
   };
 
-  // User-triggered reload
-  const loadBrandKit = async () => {
-    setLoading(true);
-    try {
-      const data = await api.brand.getPrimary();
-      setBrandKit(data);
-      populateFields(data);
-    } catch (err: any) {
-      showToast(err?.message || "Failed to load Brand Kit.", "error");
-    } finally {
-      setLoading(false);
-    }
-  };
+  // 1. Reactive Brand Kit Query
+  const {
+    data: brandKit,
+    isLoading: loading,
+    refetch,
+  } = useQuery<BrandKit>({
+    queryKey: queryKeys.brand.primary,
+    queryFn: () => api.brand.getPrimary(),
+  });
 
-  // Mount effect (Zero synchronous setState calls inside effect body)
+  // Populate local form fields whenever cached brand kit loads
   useEffect(() => {
-    let isMounted = true;
-
-    api.brand
-      .getPrimary()
-      .then((data) => {
-        if (isMounted) {
-          setBrandKit(data);
-          populateFields(data);
-        }
-      })
-      .catch((err) => {
-        if (isMounted)
-          showToast(err?.message || "Failed to initialize Brand Kit.", "error");
-      })
-      .finally(() => {
-        if (isMounted) setLoading(false);
+    if (brandKit) {
+      queueMicrotask(() => {
+        populateFields(brandKit);
       });
+    }
+  }, [brandKit]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+  // 2. Mutation with Cache Invalidation
+  const saveBrandKitMutation = useMutation({
+    mutationFn: async (payload: Partial<BrandKit>) => {
+      if (brandKit?.id) {
+        return await api.brand.update(brandKit.id, payload);
+      }
+      return await api.brand.create({ ...payload, is_primary: true });
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData(queryKeys.brand.primary, saved);
+      queryClient.invalidateQueries({ queryKey: queryKeys.brand.primary });
+      showToast(
+        "Brand Kit saved! AI Copilot will use these guidelines immediately.",
+      );
+    },
+    onError: (err: any) => {
+      showToast(err?.message || "Failed to save Brand Kit.", "error");
+    },
+  });
 
-  const handleSaveBrandKit = async () => {
+  const handleSaveBrandKit = () => {
     if (!name.trim()) {
       showToast("Product name cannot be empty.", "error");
       return;
     }
 
-    setIsSaving(true);
-    try {
-      const payload: Partial<BrandKit> = {
-        name: name.trim(),
-        tagline: tagline.trim() || undefined,
-        description: description.trim() || undefined,
-        website_url: websiteUrl.trim() || undefined,
-        industry: industry.trim() || undefined,
-        pricing_summary: pricingSummary.trim() || undefined,
-        emoji_policy: emojiPolicy,
-        tone_traits: toneTraits,
-        banned_words: bannedWords,
-        preferred_phrases: preferredPhrases,
-        target_personas: personas,
-        value_props: valueProps,
-        competitor_advantages: battlecards,
-        key_links: keyLinks,
-      };
+    const payload: Partial<BrandKit> = {
+      name: name.trim(),
+      tagline: tagline.trim() || undefined,
+      description: description.trim() || undefined,
+      website_url: websiteUrl.trim() || undefined,
+      industry: industry.trim() || undefined,
+      pricing_summary: pricingSummary.trim() || undefined,
+      emoji_policy: emojiPolicy,
+      tone_traits: toneTraits,
+      banned_words: bannedWords,
+      preferred_phrases: preferredPhrases,
+      target_personas: personas,
+      value_props: valueProps,
+      competitor_advantages: battlecards,
+      key_links: keyLinks,
+    };
 
-      let saved: BrandKit;
-      if (brandKit?.id) {
-        saved = await api.brand.update(brandKit.id, payload);
-      } else {
-        saved = await api.brand.create({ ...payload, is_primary: true });
-      }
-
-      setBrandKit(saved);
-      populateFields(saved);
-      showToast(
-        "Brand Kit saved! AI Copilot will use these guidelines immediately.",
-      );
-    } catch (err: any) {
-      showToast(err?.message || "Failed to save Brand Kit.", "error");
-    } finally {
-      setIsSaving(false);
-    }
+    saveBrandKitMutation.mutate(payload);
   };
 
   // Tag Add Helpers
@@ -256,7 +239,6 @@ export const BrandKitPage: React.FC = () => {
     setNewLinkUrl("");
   };
 
-  // Compile prompt context string for visual preview in modal
   const compiledPromptContext = useMemo(() => {
     const lines = [
       `=== BRAND GROUND TRUTH: ${name.toUpperCase() || "UNNAMED BRAND"} ===`,
@@ -319,6 +301,8 @@ export const BrandKitPage: React.FC = () => {
     pricingSummary,
   ]);
 
+  const isSaving = saveBrandKitMutation.isPending;
+
   return (
     <div className="relative h-full overflow-y-auto px-3 sm:px-6 py-4 custom-scrollbar max-w-6xl mx-auto w-full font-sans select-none text-[#09122A]">
       {/* Toast Notification */}
@@ -371,7 +355,7 @@ export const BrandKitPage: React.FC = () => {
 
         <div className="flex items-center gap-2.5 shrink-0">
           <button
-            onClick={loadBrandKit}
+            onClick={() => refetch()}
             title="Reload Brand Kit"
             className="w-9 h-9 rounded-xl bg-white border border-[#DCE7F5] hover:bg-slate-50 text-slate-600 flex items-center justify-center shadow-2xs cursor-pointer"
           >
@@ -604,7 +588,6 @@ export const BrandKitPage: React.FC = () => {
                 </span>
               </div>
 
-              {/* Tone Traits */}
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <label className="block text-xs font-bold text-[#09122A]">
@@ -663,7 +646,6 @@ export const BrandKitPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Banned Words / Anti-Fluff */}
               <div className="p-4 rounded-2xl bg-rose-50/50 border border-rose-200 space-y-2">
                 <div className="flex items-center gap-1.5">
                   <ShieldAlert size={15} className="text-rose-600" />
@@ -724,7 +706,6 @@ export const BrandKitPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Preferred Phrases */}
               <div>
                 <label className="block text-xs font-bold text-[#09122A] mb-1">
                   Preferred Brand Phrases & Mottos
@@ -786,7 +767,6 @@ export const BrandKitPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Emoji Policy */}
               <div>
                 <label className="block text-xs font-bold text-[#09122A] mb-1.5 flex items-center gap-1.5">
                   <Smile size={14} className="text-[#0E3A75]" />
@@ -954,7 +934,6 @@ export const BrandKitPage: React.FC = () => {
           {/* SECTION D: VALUE PROPS & BATTLECARDS */}
           {activeSection === "battlecards" && (
             <div className="rounded-[24px] bg-white/95 border border-[#DCE7F5] p-6 shadow-sm space-y-6">
-              {/* Value Propositions */}
               <div className="space-y-3">
                 <div className="border-b border-[#F0F5FA] pb-2">
                   <h3 className="font-bold text-base text-[#09122A]">
@@ -1015,7 +994,6 @@ export const BrandKitPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Competitor Battlecards */}
               <div className="space-y-3 pt-4 border-t border-[#F0F5FA]">
                 <div className="border-b border-[#F0F5FA] pb-2">
                   <h3 className="font-bold text-base text-[#09122A]">
@@ -1081,7 +1059,6 @@ export const BrandKitPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Pricing Reference */}
               <div className="pt-4 border-t border-[#F0F5FA]">
                 <label className="block text-xs font-bold text-[#09122A] mb-1">
                   Pricing Tiers Reference
@@ -1100,56 +1077,58 @@ export const BrandKitPage: React.FC = () => {
       )}
 
       {/* ===================================================================== */}
-      {/* 3. INSPECT COMPILED PROMPT CONTEXT MODAL                              */}
+      {/* 3. INSPECT COMPILED PROMPT CONTEXT MODAL (Portal-Wrapped)             */}
       {/* ===================================================================== */}
-      {isPromptModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#09122A]/40 backdrop-blur-sm animate-fade-up-1"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setIsPromptModalOpen(false);
-          }}
-        >
-          <div className="w-full max-w-2xl rounded-[26px] bg-white border border-[#DCE7F5] shadow-2xl flex flex-col max-h-[85vh] overflow-hidden text-[#09122A]">
-            <div className="flex items-center justify-between px-6 py-4.5 border-b border-[#F0F5FA] bg-[#F8FBFF]">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-[#EBF3FC] text-[#0E3A75] flex items-center justify-center">
-                  <Terminal size={16} />
+      {isPromptModalOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-[#09122A]/40 backdrop-blur-sm animate-fade-up-1"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setIsPromptModalOpen(false);
+            }}
+          >
+            <div className="w-full max-w-2xl rounded-[26px] bg-white border border-[#DCE7F5] shadow-2xl flex flex-col max-h-[85vh] overflow-hidden text-[#09122A]">
+              <div className="flex items-center justify-between px-6 py-4.5 border-b border-[#F0F5FA] bg-[#F8FBFF]">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-[#EBF3FC] text-[#0E3A75] flex items-center justify-center">
+                    <Terminal size={16} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-[16px] text-[#09122A]">
+                      AI Agent Ground Truth Inspector
+                    </h3>
+                    <span className="text-xs text-slate-400">
+                      Compiled context returned when agent invokes
+                      `get_brand_knowledge`
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-bold text-[16px] text-[#09122A]">
-                    AI Agent Ground Truth Inspector
-                  </h3>
-                  <span className="text-xs text-slate-400">
-                    Compiled context returned when agent invokes
-                    `get_brand_knowledge`
-                  </span>
-                </div>
+                <button
+                  onClick={() => setIsPromptModalOpen(false)}
+                  className="w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-slate-700 flex items-center justify-center cursor-pointer"
+                >
+                  <X size={15} />
+                </button>
               </div>
-              <button
-                onClick={() => setIsPromptModalOpen(false)}
-                className="w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-slate-700 flex items-center justify-center cursor-pointer"
-              >
-                <X size={15} />
-              </button>
-            </div>
 
-            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-              <pre className="p-4 rounded-2xl bg-[#09122A] text-slate-100 font-mono text-xs overflow-x-auto leading-relaxed select-text shadow-2xs">
-                {compiledPromptContext}
-              </pre>
-            </div>
+              <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                <pre className="p-4 rounded-2xl bg-[#09122A] text-slate-100 font-mono text-xs overflow-x-auto leading-relaxed select-text shadow-2xs">
+                  {compiledPromptContext}
+                </pre>
+              </div>
 
-            <div className="px-6 py-3.5 border-t border-[#F0F5FA] bg-[#F8FBFF] flex justify-end">
-              <button
-                onClick={() => setIsPromptModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[#0E3A75] text-white text-xs font-semibold cursor-pointer"
-              >
-                Close Inspector
-              </button>
+              <div className="px-6 py-3.5 border-t border-[#F0F5FA] bg-[#F8FBFF] flex justify-end">
+                <button
+                  onClick={() => setIsPromptModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-[#0E3A75] text-white text-xs font-semibold cursor-pointer"
+                >
+                  Close Inspector
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 };

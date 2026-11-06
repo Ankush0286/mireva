@@ -35,25 +35,23 @@ async def read_inbox_with_browser_agent(
     account_id: str,
     specific_user: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Deploys the autonomous Browser AI Agent to log into Instagram or Twitter,
-    scan direct messages, check message requests, open conversation threads,
-    and return a plain-English summary of who replied and what they said.
-    """
-    with ctx.deps.db_session_scope() as db:
-        service = AccountService(db)
-        account = service.get_by_id_or_raise(UUID(account_id))
+    try:
+        async with ctx.deps.db_session_scope() as db:
+            service = AccountService(db)
+            account = await service.get_by_id_or_raise(UUID(account_id))
 
-    summary = await read_and_summarize_inbox(
-        account=account,
-        specific_user=specific_user,
-        headless=True,
-    )
-    return {
-        "account_handle": account.handle,
-        "platform": account.platform.value,
-        "inbox_summary": summary,
-    }
+        summary = await read_and_summarize_inbox(
+            account=account,
+            specific_user=specific_user,
+            headless=True,
+        )
+        return {
+            "account_handle": account.handle,
+            "platform": account.platform.value,
+            "inbox_summary": summary,
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 @marketing_agent.tool
@@ -63,28 +61,27 @@ async def scout_creators_with_browser_agent(
     niche_or_hashtag: str,
     max_leads: int = 5,
 ) -> dict[str, Any]:
-    """
-    Deploys the autonomous Browser AI Agent to explore Instagram or Twitter,
-    inspect creator bios, filter out bots, and return qualified leads.
-    """
-    with ctx.deps.db_session_scope() as db:
-        service = AccountService(db)
-        account = service.get_by_id_or_raise(UUID(account_id))
+    try:
+        async with ctx.deps.db_session_scope() as db:
+            service = AccountService(db)
+            account = await service.get_by_id_or_raise(UUID(account_id))
 
-    report = await scout_influencer_leads(
-        account=account,
-        niche_or_query=niche_or_hashtag,
-        max_leads=max_leads,
-        headless=True,
-    )
-    return {
-        "niche": niche_or_hashtag,
-        "scout_report": report,
-    }
+        report = await scout_influencer_leads(
+            account=account,
+            niche_or_query=niche_or_hashtag,
+            max_leads=max_leads,
+            headless=True,
+        )
+        return {
+            "niche": niche_or_hashtag,
+            "scout_report": report,
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 @marketing_agent.tool
-def add_lead_to_crm(
+async def add_lead_to_crm(
     ctx: RunContext[AgentDeps],
     platform: str,
     handle: str,
@@ -93,11 +90,8 @@ def add_lead_to_crm(
     follower_count: int | None = None,
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
-    """
-    Imports a discovered prospect or influencer lead into the social CRM.
-    """
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = OutreachService(db)
             cmd = CreateLeadCommand(
                 platform=PlatformType(platform.lower()),
@@ -109,7 +103,7 @@ def add_lead_to_crm(
                 stage=LeadStage.DISCOVERED,
                 tags=tags or [],
             )
-            lead = service.create_lead(cmd)
+            lead = await service.create_lead(cmd)
             return {
                 "id": str(lead.id),
                 "handle": lead.handle,
@@ -117,9 +111,9 @@ def add_lead_to_crm(
                 "stage": lead.stage.value,
             }
     except LeadAlreadyExistsError as exc:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = OutreachService(db)
-            existing = service.get_lead_by_platform_and_handle(
+            existing = await service.get_lead_by_platform_and_handle(
                 PlatformType(platform.lower()), handle
             )
             return {
@@ -132,18 +126,15 @@ def add_lead_to_crm(
 
 
 @marketing_agent.tool
-def list_crm_leads(
+async def list_crm_leads(
     ctx: RunContext[AgentDeps],
     platform: str | None = None,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """
-    Lists existing leads in the social CRM so you can find their lead_id before staging DMs.
-    """
-    with ctx.deps.db_session_scope() as db:
+    async with ctx.deps.db_session_scope() as db:
         service = OutreachService(db)
         p_enum = PlatformType(platform.lower()) if platform else None
-        leads = service.list_leads(platform=p_enum, limit=limit)
+        leads = await service.list_leads(platform=p_enum, limit=limit)
         return [
             {
                 "id": str(lead.id),
@@ -158,17 +149,14 @@ def list_crm_leads(
 
 
 @marketing_agent.tool
-def stage_cold_outreach_dm(
+async def stage_cold_outreach_dm(
     ctx: RunContext[AgentDeps],
     lead_id: str,
     account_id: str,
     message_content: str,
 ) -> dict[str, Any]:
-    """
-    Stages a personalized cold DM behind a human review gate.
-    """
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = OutreachService(db)
             cmd = StageMessageCommand(
                 lead_id=UUID(lead_id),
@@ -176,7 +164,7 @@ def stage_cold_outreach_dm(
                 content=message_content,
                 channel=OutreachChannel.DM,
             )
-            msg = service.stage_message(cmd)
+            msg = await service.stage_message(cmd)
             return {
                 "id": str(msg.id),
                 "lead_id": str(msg.lead_id),
@@ -188,17 +176,14 @@ def stage_cold_outreach_dm(
 
 
 @marketing_agent.tool
-def review_staged_dm(
+async def review_staged_dm(
     ctx: RunContext[AgentDeps],
     message_id: str,
     approve: bool,
     edited_content: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Human-in-the-loop review tool to approve or reject a staged cold DM.
-    """
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = OutreachService(db)
             cmd = ReviewMessageCommand(
                 message_id=UUID(message_id),
@@ -207,7 +192,7 @@ def review_staged_dm(
                 else OutreachMessageStatus.REJECTED,
                 edited_content=edited_content,
             )
-            reviewed = service.review_message(cmd)
+            reviewed = await service.review_message(cmd)
             return {
                 "id": str(reviewed.id),
                 "status": reviewed.status.value,
@@ -223,25 +208,28 @@ async def dispatch_dm_now(
     message_id: str,
 ) -> dict[str, Any]:
     """
-    Immediately dispatches a staged or approved cold DM to the recipient on Instagram or Twitter
-    using the platform browser adapter and recorded send_dm recipe.
-    Use this when the user explicitly asks to 'send a DM now'.
+    Hardened DM dispatch: Captures account and recipient handle BEFORE triggering
+    state refreshes, preventing MissingGreenlet lazy-load crashes in async SQLAlchemy.
     """
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = OutreachService(db)
-            msg = service.get_message_by_id_or_raise(UUID(message_id))
+            msg = await service.get_message_by_id_or_raise(UUID(message_id))
+
+            # Read related entities into memory before any refresh
+            account = msg.account
+            lead_handle = msg.lead.handle
+            content_to_send = msg.content
+
             if msg.status == OutreachMessageStatus.STAGED:
-                msg = service.review_message(
+                await service.review_message(
                     ReviewMessageCommand(
                         message_id=msg.id,
                         status=OutreachMessageStatus.APPROVED,
                     )
                 )
-            account = msg.account
-            lead_handle = msg.lead.handle
-            content_to_send = msg.content
 
+        # Execute browser adapter outside the database lock
         adapter = PlatformRegistry.get_adapter(account)
         try:
             thread_id = await adapter.send_dm(
@@ -251,9 +239,10 @@ async def dispatch_dm_now(
         finally:
             await adapter.close()
 
-        with ctx.deps.db_session_scope() as db:
+        # Record outcome in a fresh database scope
+        async with ctx.deps.db_session_scope() as db:
             service = OutreachService(db)
-            delivered = service.record_delivery(
+            delivered = await service.record_delivery(
                 RecordMessageDeliveryCommand(
                     message_id=UUID(message_id),
                     platform_message_id=thread_id,
@@ -267,9 +256,9 @@ async def dispatch_dm_now(
             }
     except Exception as exc:
         try:
-            with ctx.deps.db_session_scope() as db:
+            async with ctx.deps.db_session_scope() as db:
                 service = OutreachService(db)
-                service.record_failure(
+                await service.record_failure(
                     RecordMessageFailureCommand(
                         message_id=UUID(message_id),
                         error_message=str(exc),

@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Ensure all tool decorators register on marketing_agent
 from app.agent import tools as _registered_tools  # noqa: F401
@@ -27,10 +27,6 @@ def _build_prompt_with_history(
     prior_context: list[dict[str, str]],
     current_user_prompt: str,
 ) -> str:
-    """
-    Formats prior conversation turns and any session system_prompt_override
-    into a structured context block so the LLM maintains full multi-turn memory.
-    """
     if not prior_context:
         return current_user_prompt
 
@@ -45,7 +41,6 @@ def _build_prompt_with_history(
 
 
 def _apply_thinking_directive(user_prompt: str, thinking: bool) -> str:
-    """Prepends a structured <think>...</think> directive when Thinking Mode is enabled."""
     if not thinking:
         return user_prompt
     return (
@@ -57,58 +52,74 @@ def _apply_thinking_directive(user_prompt: str, thinking: bool) -> str:
     )
 
 
-def _record_tool_traces(
+async def _record_tool_traces(
     copilot_service: CopilotService,
     session_id: UUID,
     messages: list[Any],
     elapsed_ms: int,
 ) -> list[ToolExecutionLog]:
-    """Extracts tool-call parts from Pydantic AI messages, logs them, and returns the records."""
-    recorded_logs: list[ToolExecutionLog] = []
+    """
+    Correlates ToolCallPart and ToolReturnPart using tool_call_id so the actual
+    return value is preserved in the database.
+    """
+    tool_returns: dict[str, Any] = {}
+    tool_calls: list[Any] = []
+
+    # Pass 1: Extract return values and call parts
     for message in messages:
-        parts = getattr(message, "parts", None)
-        if not parts:
-            continue
-        for part in parts:
-            if getattr(part, "part_kind", None) == "tool-call":
-                tool_name = getattr(part, "tool_name", "unknown_tool")
-                raw_args = getattr(part, "args", {})
-                input_args = (
-                    raw_args
-                    if isinstance(raw_args, dict)
-                    else {"arguments": str(raw_args)}
-                )
-                log = copilot_service.log_tool_execution(
-                    LogToolExecutionCommand(
-                        session_id=session_id,
-                        tool_name=str(tool_name),
-                        input_arguments=input_args,
-                        status=ToolExecutionStatus.SUCCESS,
-                        execution_time_ms=elapsed_ms,
-                    )
-                )
-                recorded_logs.append(log)
+        for part in getattr(message, "parts", []):
+            part_kind = getattr(part, "part_kind", None)
+            if part_kind == "tool-return":
+                call_id = getattr(part, "tool_call_id", None)
+                if call_id:
+                    tool_returns[call_id] = getattr(part, "content", None)
+            elif part_kind == "tool-call":
+                tool_calls.append(part)
+
+    recorded_logs: list[ToolExecutionLog] = []
+
+    # Pass 2: Pair calls with their results
+    for call in tool_calls:
+        tool_name = getattr(call, "tool_name", "unknown_tool")
+        raw_args = getattr(call, "args", {})
+        call_id = getattr(call, "tool_call_id", None)
+        output_result = tool_returns.get(call_id) if call_id else None
+
+        input_args = (
+            raw_args
+            if isinstance(raw_args, dict)
+            else {"arguments": str(raw_args)}
+        )
+
+        log = await copilot_service.log_tool_execution(
+            LogToolExecutionCommand(
+                session_id=session_id,
+                tool_name=str(tool_name),
+                input_arguments=input_args,
+                output_result=output_result,
+                status=ToolExecutionStatus.SUCCESS,
+                execution_time_ms=elapsed_ms,
+            )
+        )
+        recorded_logs.append(log)
+
     return recorded_logs
 
 
 async def run_agent_turn(
-    db: Session,
+    db: AsyncSession,
     session_id: UUID,
     user_prompt: str,
     model_override: str | Model | None = None,
     thinking: bool = False,
 ) -> ChatMessage:
-    """
-    Executes a complete multi-turn ReAct agent cycle and returns the persisted
-    assistant ChatMessage ORM record.
-    """
     copilot_service = CopilotService(db)
 
-    # 1. Fetch prior conversation context before appending the new user message
-    prior_context = copilot_service.get_conversation_context(session_id, max_messages=20)
+    # 1. Fetch prior conversation context
+    prior_context = await copilot_service.get_conversation_context(session_id, max_messages=20)
 
-    # 2. Persist incoming User Message (raw user prompt without internal directives)
-    copilot_service.add_message(
+    # 2. Persist User Message
+    await copilot_service.add_message(
         AddChatMessageCommand(
             session_id=session_id,
             role=ChatRole.USER,
@@ -138,8 +149,8 @@ async def run_agent_turn(
     )
     elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
-    # 5. Record Tool Execution Traces
-    recorded_tools = _record_tool_traces(
+    # 5. Record Tool Execution Traces (with outputs)
+    recorded_tools = await _record_tool_traces(
         copilot_service=copilot_service,
         session_id=session_id,
         messages=list(result.new_messages()),
@@ -150,7 +161,7 @@ async def run_agent_turn(
     assistant_reply = str(result.output)
     model_label = model_override if isinstance(model_override, str) else "default"
 
-    assistant_msg = copilot_service.add_message(
+    assistant_msg = await copilot_service.add_message(
         AddChatMessageCommand(
             session_id=session_id,
             role=ChatRole.ASSISTANT,
@@ -159,34 +170,25 @@ async def run_agent_turn(
         )
     )
 
-    # 7. Foreign-key link tools to this assistant message in database
+    # 7. Foreign-key link tools to this assistant message
     for tool_log in recorded_tools:
         tool_log.message_id = assistant_msg.id
-    db.commit()
+    await db.commit()
 
     return assistant_msg
 
 
 async def stream_agent_turn(
-    db: Session,
+    db: AsyncSession,
     session_id: UUID,
     user_prompt: str,
     model_override: str | Model | None = None,
     thinking: bool = False,
 ) -> AsyncGenerator[str | dict[str, Any], None]:
-    """
-    Real-Time Node-by-Node Streaming ReAct Execution Loop:
-    1. Steps through the agent graph using `marketing_agent.iter()`.
-    2. The moment a `CallToolsNode` is reached (before the next LLM turn starts),
-       logs and yields the `{"__event__": "tools", ...}` SSE packet in real time.
-    3. Streams the final synthesized response tokens.
-    4. Persists the completed assistant turn and links tool traces.
-    """
     copilot_service = CopilotService(db)
-    prior_context = copilot_service.get_conversation_context(session_id, max_messages=20)
+    prior_context = await copilot_service.get_conversation_context(session_id, max_messages=20)
 
-    # 1. Persist User Prompt
-    copilot_service.add_message(
+    await copilot_service.add_message(
         AddChatMessageCommand(
             session_id=session_id,
             role=ChatRole.USER,
@@ -207,7 +209,6 @@ async def stream_agent_turn(
     recorded_tools: list[ToolExecutionLog] = []
     step_start = time.perf_counter()
 
-    # 2. Step through the ReAct Agent Graph Node-by-Node in Real Time
     async with marketing_agent.iter(
         contextualized_prompt,
         deps=deps,
@@ -216,7 +217,7 @@ async def stream_agent_turn(
         async for node in agent_run:
             if Agent.is_call_tools_node(node):
                 step_ms = int((time.perf_counter() - step_start) * 1000)
-                new_tools = _record_tool_traces(
+                new_tools = await _record_tool_traces(
                     copilot_service=copilot_service,
                     session_id=session_id,
                     messages=[node.model_response],
@@ -236,13 +237,11 @@ async def stream_agent_turn(
                         }
                         for t in recorded_tools
                     ]
-                    # Flush tool event over SSE immediately BEFORE Turn 2 LLM generation starts
                     yield {"__event__": "tools", "tools": tools_payload}
                 step_start = time.perf_counter()
 
         assistant_reply = str(agent_run.result.output) if agent_run.result else ""
 
-    # 3. Stream Synthesized Response in Real Time
     words = assistant_reply.split(" ")
     for i, word in enumerate(words):
         chunk = word if i == 0 else " " + word
@@ -251,11 +250,10 @@ async def stream_agent_turn(
         if len(words) > 1:
             await asyncio.sleep(0.012)
 
-    # 4. Persist Completed Assistant Response
     full_response = "".join(accumulated_chunks)
     model_label = model_override if isinstance(model_override, str) else "default"
 
-    assistant_msg = copilot_service.add_message(
+    assistant_msg = await copilot_service.add_message(
         AddChatMessageCommand(
             session_id=session_id,
             role=ChatRole.ASSISTANT,
@@ -264,7 +262,6 @@ async def stream_agent_turn(
         )
     )
 
-    # 5. Associate recorded tool executions with assistant message
     for tool_log in recorded_tools:
         tool_log.message_id = assistant_msg.id
-    db.commit()
+    await db.commit()

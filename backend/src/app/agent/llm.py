@@ -1,7 +1,7 @@
+import asyncio
 import logging
-import threading
-from collections.abc import Generator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -11,8 +11,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.openrouter import OpenRouterModel
 from pydantic_ai.providers.fireworks import FireworksProvider
 from pydantic_ai.providers.openrouter import OpenRouterProvider
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.prompts import MARKETING_AGENT_SYSTEM_PROMPT
 from app.core.agent_config import MODEL_REGISTRY, agent_settings
@@ -23,23 +22,23 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AgentDeps:
-    """Dependency container injected into every tool call."""
+    """Async dependency container injected into every tool call."""
 
-    db: Session
+    db: AsyncSession
     session_id: UUID | None = None
-    _db_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    _async_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
-    @contextmanager
-    def db_session_scope(self) -> Generator[Session, None, None]:
+    @asynccontextmanager
+    async def db_session_scope(self) -> AsyncGenerator[AsyncSession, None]:
         """
-        Serializes concurrent tool access to the SQLAlchemy Session across worker
-        threads so parallel tool calls never collide mid-commit ('prepared' state).
+        Serializes concurrent tool access to the AsyncSession in asyncio.
+        Rolls back transactions on errors so tool failures don't poison subsequent turns.
         """
-        with self._db_lock:
+        async with self._async_lock:
             try:
                 yield self.db
-            except SQLAlchemyError:
-                self.db.rollback()
+            except Exception:
+                await self.db.rollback()
                 raise
 
 

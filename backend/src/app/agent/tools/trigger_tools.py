@@ -15,7 +15,7 @@ from app.modules.triggers.service import TriggerService
 
 
 @marketing_agent.tool
-def add_competitor_to_watch(
+async def add_competitor_to_watch(
     ctx: RunContext[AgentDeps],
     platform: str,
     handle: str,
@@ -25,14 +25,14 @@ def add_competitor_to_watch(
     Adds a competitor or target influencer profile to the scraping watch list.
     """
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = TriggerService(db)
             cmd = AddWatchedHandleCommand(
                 platform=PlatformType(platform.lower()),
                 handle=handle,
                 display_name=display_name,
             )
-            watched = service.add_watched_handle(cmd)
+            watched = await service.add_watched_handle(cmd)
             return {
                 "id": str(watched.id),
                 "platform": watched.platform.value,
@@ -44,7 +44,7 @@ def add_competitor_to_watch(
 
 
 @marketing_agent.tool
-def create_keyword_trigger_rule(
+async def create_keyword_trigger_rule(
     ctx: RunContext[AgentDeps],
     name: str,
     platform: str,
@@ -59,7 +59,7 @@ def create_keyword_trigger_rule(
     when specified keywords appear in competitor feeds.
     """
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = TriggerService(db)
             cmd = CreateTriggerRuleCommand(
                 name=name,
@@ -71,7 +71,7 @@ def create_keyword_trigger_rule(
                 keywords_exclude=keywords_exclude or [],
                 response_template=response_template,
             )
-            rule = service.create_rule(cmd)
+            rule = await service.create_rule(cmd)
             return {
                 "id": str(rule.id),
                 "name": rule.name,
@@ -84,7 +84,7 @@ def create_keyword_trigger_rule(
 
 
 @marketing_agent.tool
-def review_intercepted_match(
+async def review_intercepted_match(
     ctx: RunContext[AgentDeps],
     match_id: str,
     approve: bool,
@@ -95,14 +95,14 @@ def review_intercepted_match(
     If approved, you can supply a custom refined response copy.
     """
     try:
-        with ctx.deps.db_session_scope() as db:
+        async with ctx.deps.db_session_scope() as db:
             service = TriggerService(db)
             cmd = ReviewMatchCommand(
                 match_id=UUID(match_id),
                 status=TriggerMatchStatus.APPROVED if approve else TriggerMatchStatus.IGNORED,
                 edited_response=edited_response,
             )
-            reviewed = service.review_match(cmd)
+            reviewed = await service.review_match(cmd)
             return {
                 "id": str(reviewed.id),
                 "status": reviewed.status.value,

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   TrendingUp,
   Megaphone,
@@ -8,14 +9,13 @@ import {
   Sparkles,
   RefreshCw,
   ArrowUpRight,
-  CheckCircle2,
-  Clock,
-  AlertTriangle,
   Activity,
   Layers,
   ShieldCheck,
   Database,
   ChevronRight,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import {
   api,
@@ -29,6 +29,7 @@ import {
   type ActivityLog,
   type DataConnector,
 } from "../../api/client";
+import { queryKeys } from "../../api/queryKeys";
 import { type SidebarTab } from "../../components/Sidebar";
 import { LoadingState } from "../../components/LoadingState";
 
@@ -211,58 +212,73 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   onNavigate,
   onOpenCopilot,
 }) => {
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [posts, setPosts] = useState<ScheduledPost[]>([]);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [messages, setMessages] = useState<OutreachMessage[]>([]);
-  const [matches, setMatches] = useState<TriggerMatch[]>([]);
-  const [rules, setRules] = useState<TriggerRule[]>([]);
-  const [logs, setLogs] = useState<ActivityLog[]>([]);
-  const [connectors, setConnectors] = useState<DataConnector[]>([]);
-
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [chartFilter, setChartFilter] = useState<
     "all" | "content" | "outreach"
   >("all");
   const [hoveredDayIdx, setHoveredDayIdx] = useState<number | null>(null);
 
-  const loadAllMetrics = async () => {
-    setLoading(true);
-    try {
-      const [
-        accRes,
-        campRes,
-        leadRes,
-        msgRes,
-        matchRes,
-        ruleRes,
-        logRes,
-        connRes,
-      ] = await Promise.allSettled([
-        api.accounts.list(false),
-        api.campaigns.list(),
-        api.outreach.listLeads({ limit: 200 }),
-        api.outreach.listMessages({ limit: 200 }),
-        api.triggers.listMatches({ limit: 200 }),
-        api.triggers.listRules(),
-        api.history.list({ limit: 60 }),
-        api.connectors.list(),
-      ]);
+  // 1. Reactive Cached Queries via TanStack Query
+  const { data: accounts = [], isLoading: accountsLoading } = useQuery<
+    Account[]
+  >({
+    queryKey: queryKeys.accounts.list(false),
+    queryFn: () => api.accounts.list(false),
+  });
 
-      const loadedCampaigns =
-        campRes.status === "fulfilled" ? campRes.value : [];
-      if (accRes.status === "fulfilled") setAccounts(accRes.value);
-      setCampaigns(loadedCampaigns);
-      if (leadRes.status === "fulfilled") setLeads(leadRes.value);
-      if (msgRes.status === "fulfilled") setMessages(msgRes.value);
-      if (matchRes.status === "fulfilled") setMatches(matchRes.value);
-      if (ruleRes.status === "fulfilled") setRules(ruleRes.value);
-      if (logRes.status === "fulfilled") setLogs(logRes.value);
-      if (connRes.status === "fulfilled") setConnectors(connRes.value);
+  const { data: campaigns = [], isLoading: campaignsLoading } = useQuery<
+    Campaign[]
+  >({
+    queryKey: queryKeys.campaigns.list(),
+    queryFn: () => api.campaigns.list(),
+  });
 
+  const { data: leads = [], isLoading: leadsLoading } = useQuery<Lead[]>({
+    queryKey: queryKeys.outreach.leads({ limit: 200 }),
+    queryFn: () => api.outreach.listLeads({ limit: 200 }),
+  });
+
+  const { data: messages = [], isLoading: messagesLoading } = useQuery<
+    OutreachMessage[]
+  >({
+    queryKey: queryKeys.outreach.messages({ limit: 200 }),
+    queryFn: () => api.outreach.listMessages({ limit: 200 }),
+  });
+
+  const { data: matches = [], isLoading: matchesLoading } = useQuery<
+    TriggerMatch[]
+  >({
+    queryKey: queryKeys.triggers.matches({ limit: 200 }),
+    queryFn: () => api.triggers.listMatches({ limit: 200 }),
+  });
+
+  const { data: rules = [], isLoading: rulesLoading } = useQuery<TriggerRule[]>(
+    {
+      queryKey: queryKeys.triggers.rules(),
+      queryFn: () => api.triggers.listRules(),
+    },
+  );
+
+  const { data: logs = [], isLoading: logsLoading } = useQuery<ActivityLog[]>({
+    queryKey: queryKeys.history.list({ limit: 60 }),
+    queryFn: () => api.history.list({ limit: 60 }),
+  });
+
+  const { data: connectors = [], isLoading: connectorsLoading } = useQuery<
+    DataConnector[]
+  >({
+    queryKey: queryKeys.connectors.list(),
+    queryFn: () => api.connectors.list(),
+  });
+
+  const { data: posts = [], isLoading: postsLoading } = useQuery<
+    ScheduledPost[]
+  >({
+    queryKey: ["campaigns", "all-posts", campaigns.map((c) => c.id)],
+    queryFn: async () => {
+      if (campaigns.length === 0) return [];
       const detailedCamps = await Promise.allSettled(
-        loadedCampaigns.map((c) => api.campaigns.get(c.id)),
+        campaigns.map((c) => api.campaigns.get(c.id)),
       );
       const hydratedPosts: ScheduledPost[] = [];
       detailedCamps.forEach((r) => {
@@ -270,70 +286,25 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
           hydratedPosts.push(...r.value.posts);
         }
       });
-      setPosts(hydratedPosts);
-    } finally {
-      setLoading(false);
-    }
+      return hydratedPosts;
+    },
+    enabled: campaigns.length > 0,
+  });
+
+  const loading =
+    accountsLoading ||
+    campaignsLoading ||
+    leadsLoading ||
+    messagesLoading ||
+    matchesLoading ||
+    rulesLoading ||
+    logsLoading ||
+    connectorsLoading ||
+    (campaigns.length > 0 && postsLoading);
+
+  const loadAllMetrics = () => {
+    queryClient.invalidateQueries();
   };
-
-  // Mount effect (Zero synchronous setState calls inside effect body)
-  useEffect(() => {
-    let isMounted = true;
-
-    Promise.allSettled([
-      api.accounts.list(false),
-      api.campaigns.list(),
-      api.outreach.listLeads({ limit: 200 }),
-      api.outreach.listMessages({ limit: 200 }),
-      api.triggers.listMatches({ limit: 200 }),
-      api.triggers.listRules(),
-      api.history.list({ limit: 60 }),
-      api.connectors.list(),
-    ])
-      .then(
-        async ([
-          accRes,
-          campRes,
-          leadRes,
-          msgRes,
-          matchRes,
-          ruleRes,
-          logRes,
-          connRes,
-        ]) => {
-          if (!isMounted) return;
-          const loadedCampaigns =
-            campRes.status === "fulfilled" ? campRes.value : [];
-          if (accRes.status === "fulfilled") setAccounts(accRes.value);
-          setCampaigns(loadedCampaigns);
-          if (leadRes.status === "fulfilled") setLeads(leadRes.value);
-          if (msgRes.status === "fulfilled") setMessages(msgRes.value);
-          if (matchRes.status === "fulfilled") setMatches(matchRes.value);
-          if (ruleRes.status === "fulfilled") setRules(ruleRes.value);
-          if (logRes.status === "fulfilled") setLogs(logRes.value);
-          if (connRes.status === "fulfilled") setConnectors(connRes.value);
-
-          const detailedCamps = await Promise.allSettled(
-            loadedCampaigns.map((c) => api.campaigns.get(c.id)),
-          );
-          if (!isMounted) return;
-          const hydratedPosts: ScheduledPost[] = [];
-          detailedCamps.forEach((r) => {
-            if (r.status === "fulfilled" && r.value.posts) {
-              hydratedPosts.push(...r.value.posts);
-            }
-          });
-          setPosts(hydratedPosts);
-        },
-      )
-      .finally(() => {
-        if (isMounted) setLoading(false);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
 
   // ==========================================================================
   // Computed Analytics & 7-Day Time-Series Aggregation
@@ -391,7 +362,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
     };
   }, [accounts, posts, messages, matches]);
 
-  // Build 7-day daily buckets from real entity timestamps
   const dailySeries = useMemo(() => {
     const days = LAST_SEVEN_DAYS.map((d) => ({
       ...d,
@@ -455,7 +425,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
     return days;
   }, [posts, logs, leads, messages, matches]);
 
-  // CRM Funnel Stages
   const crmFunnel = useMemo(() => {
     const stages = [
       { key: "discovered", label: "Discovered", color: "#64748B" },
@@ -479,7 +448,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
     });
   }, [leads]);
 
-  // Chart Geometry Calculation
   const chartGeometry = useMemo(() => {
     const values = dailySeries.map((d) =>
       chartFilter === "content"
@@ -502,7 +470,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       return { x, y, val, day: dailySeries[idx] };
     });
 
-    // Smooth cubic bezier path
     let pathD = "";
     coords.forEach((pt, idx) => {
       if (idx === 0) {
@@ -527,7 +494,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 
   return (
     <div className="relative h-full overflow-y-auto px-3 sm:px-6 py-4 custom-scrollbar max-w-6xl mx-auto w-full font-sans select-none text-[#09122A]">
-      {/* 1. Executive Header */}
+      {/* 1. Header */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
         <div>
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/90 border border-[#DCE7F5] text-[11px] font-bold uppercase tracking-wider text-[#0E3A75] mb-2 shadow-2xs">
@@ -561,7 +528,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
         <div className="flex items-center gap-2.5 shrink-0">
           <button
             onClick={loadAllMetrics}
-            title="Refresh telemetry"
+            title="Refresh all cached telemetry"
             className="w-9 h-9 rounded-xl bg-white border border-[#DCE7F5] hover:bg-slate-50 text-slate-600 flex items-center justify-center shadow-2xs cursor-pointer"
           >
             <RefreshCw
@@ -727,7 +694,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 
           {/* 3. Main Row: 7-Day Activity Velocity Chart + Content Donut */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {/* 7-Day Multi-Channel Velocity Chart (2 Columns Wide) */}
             <div className="lg:col-span-2 rounded-[24px] bg-white/95 border border-[#DCE7F5] p-5 shadow-sm flex flex-col justify-between">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 mb-2 border-b border-[#F0F5FA]">
                 <div>
@@ -789,7 +755,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                     </linearGradient>
                   </defs>
 
-                  {/* Horizontal Reference Grid Lines */}
                   {[0, 0.5, 1].map((ratio, idx) => {
                     const y =
                       chartGeometry.padY +
@@ -817,7 +782,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                     );
                   })}
 
-                  {/* Smooth Area Fill & Stroke */}
                   {chartGeometry.areaD && (
                     <path
                       d={chartGeometry.areaD}
@@ -834,7 +798,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                     />
                   )}
 
-                  {/* Data Points & Hover Targets */}
                   {chartGeometry.coords.map((pt, idx) => {
                     const isHovered = hoveredDayIdx === idx;
                     return (
@@ -844,7 +807,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                         onMouseLeave={() => setHoveredDayIdx(null)}
                         className="cursor-pointer"
                       >
-                        {/* Invisible wide hit column */}
                         <rect
                           x={pt.x - 24}
                           y={0}
@@ -884,7 +846,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                   })}
                 </svg>
 
-                {/* Floating Hover Tooltip */}
                 {hoveredDayIdx !== null &&
                   chartGeometry.coords[hoveredDayIdx] && (
                     <div className="absolute top-2 right-4 px-3 py-2 rounded-xl bg-[#09122A] text-white text-[11px] shadow-lg pointer-events-none flex items-center gap-3">
@@ -911,7 +872,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               </div>
             </div>
 
-            {/* Content Pipeline Distribution Donut (1 Column Wide) */}
+            {/* Post Queue Distribution Donut */}
             <div className="rounded-[24px] bg-white/95 border border-[#DCE7F5] p-5 shadow-sm flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#F0F5FA]">
@@ -956,9 +917,8 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             </div>
           </div>
 
-          {/* 4. Bottom Row: Outreach Conversion Funnel + Recent Activity Stream */}
+          {/* 4. Bottom Row: Outreach Funnel & Recent Activity */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* CRM Lead Conversion Funnel */}
             <div className="rounded-[24px] bg-white/95 border border-[#DCE7F5] p-5 shadow-sm flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#F0F5FA]">
@@ -1005,10 +965,9 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 </div>
               </div>
 
-              {/* Action Gate Banner */}
               <div className="mt-5 p-3 rounded-2xl bg-[#F8FAFD] border border-[#E2ECF7] flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
-                  <Clock size={15} className="text-amber-600 shrink-0" />
+                  <Activity size={15} className="text-amber-600 shrink-0" />
                   <span className="text-xs font-semibold text-[#09122A]">
                     {metrics.stagedDms} cold DMs & {metrics.pendingMatches}{" "}
                     trigger replies awaiting review
@@ -1025,7 +984,6 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               </div>
             </div>
 
-            {/* Live Audit Trail Stream */}
             <div className="rounded-[24px] bg-white/95 border border-[#DCE7F5] p-5 shadow-sm flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between pb-3 mb-3 border-b border-[#F0F5FA]">

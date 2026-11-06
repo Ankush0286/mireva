@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.browser_agent import (
     read_and_summarize_inbox,
@@ -15,13 +15,12 @@ from app.agent.tools.outreach_tools import (
 )
 from app.common.enums import PlatformType
 from app.modules.accounts.commands import CreateAccountCommand
-from app.modules.accounts.exceptions import AccountNotFoundError
 from app.modules.accounts.service import AccountService
 
 
-def _create_sample_account(db: Session, handle: str = "agent_scout_bot"):
+async def _create_sample_account(db: AsyncSession, handle: str = "agent_scout_bot"):
     service = AccountService(db)
-    return service.create_account(
+    return await service.create_account(
         CreateAccountCommand(
             platform=PlatformType.INSTAGRAM,
             handle=handle,
@@ -32,8 +31,8 @@ def _create_sample_account(db: Session, handle: str = "agent_scout_bot"):
 
 
 @pytest.mark.anyio
-async def test_read_and_summarize_inbox_orchestration(db_session: Session):
-    account = _create_sample_account(db_session, "inbox_bot")
+async def test_read_and_summarize_inbox_orchestration(db_session: AsyncSession):
+    account = await _create_sample_account(db_session, "inbox_bot")
 
     mock_summary = "Checked inbox: Found 1 reply from @billgates saying 'Sounds good!'"
 
@@ -57,8 +56,8 @@ async def test_read_and_summarize_inbox_orchestration(db_session: Session):
 
 
 @pytest.mark.anyio
-async def test_scout_influencer_leads_orchestration(db_session: Session):
-    account = _create_sample_account(db_session, "scout_tester")
+async def test_scout_influencer_leads_orchestration(db_session: AsyncSession):
+    account = await _create_sample_account(db_session, "scout_tester")
 
     mock_report = '[{"handle": "indie_dev", "follower_count": 22000, "bio": "SaaS Builder"}]'
 
@@ -82,8 +81,8 @@ async def test_scout_influencer_leads_orchestration(db_session: Session):
 
 
 @pytest.mark.anyio
-async def test_main_agent_invokes_browser_tools(db_session: Session):
-    account = _create_sample_account(db_session, "main_agent_user")
+async def test_main_agent_invokes_browser_tools(db_session: AsyncSession):
+    account = await _create_sample_account(db_session, "main_agent_user")
 
     ctx = AsyncMock()
     ctx.deps = AgentDeps(db=db_session)
@@ -119,10 +118,11 @@ async def test_main_agent_invokes_browser_tools(db_session: Session):
 
 
 @pytest.mark.anyio
-async def test_browser_tools_error_recovery_on_invalid_account(db_session: Session):
+async def test_browser_tools_error_recovery_on_invalid_account(db_session: AsyncSession):
     ctx = AsyncMock()
     ctx.deps = AgentDeps(db=db_session)
 
-    # Calling with nonexistent UUID raises AccountNotFoundError gracefully
-    with pytest.raises(AccountNotFoundError):
-        await read_inbox_with_browser_agent(ctx, account_id=str(uuid4()))
+    # The tool catches AccountNotFoundError and returns {"error": ...} safely
+    result = await read_inbox_with_browser_agent(ctx, account_id=str(uuid4()))
+    assert "error" in result
+    assert "was not found" in result["error"]

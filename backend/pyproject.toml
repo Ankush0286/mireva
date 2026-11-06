@@ -7,10 +7,10 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.20.1",
     "apscheduler>=3.11.3",
+    "asyncpg>=0.32.0",
     "cryptography>=50.0.2",
     "fastapi>=0.161.1",
-    "libsql>=0.1.11",
-    "libsql-client>=0.3.1",
+    "greenlet>=3.5.6",
     "numpy>=2.5.4",
     "opencv-python>=5.0.0.93",
     "pillow>=13.0.0",
@@ -22,7 +22,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "filetree-cli>=0.1.0",
+    "httpx>=0.28.1",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "ruff>=0.17.3",

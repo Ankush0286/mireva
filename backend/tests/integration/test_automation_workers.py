@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.automation.scheduler import (
     get_scheduler,
@@ -58,18 +58,15 @@ class MockAutomationAdapter(BasePlatformAdapter):
     async def publish_post(
         self, content: str, media_paths: list[str] | None = None
     ) -> PublishResult:
-        _ = (content, media_paths)
         return PublishResult(
             platform_post_id="mock_post_123",
             platform_post_url="https://mock.platform/post/123",
         )
 
     async def send_dm(self, recipient_handle: str, message_text: str) -> str:
-        _ = (recipient_handle, message_text)
         return "mock_dm_thread_123"
 
     async def scrape_feed(self, target_handle: str, limit: int = 15) -> list[ScrapedPost]:
-        _ = limit
         return [
             ScrapedPost(
                 platform_post_id="tweet_scraped_999",
@@ -94,7 +91,8 @@ def register_mock_adapter():
     try:
         yield
     finally:
-        PlatformRegistry.register(PlatformType.TWITTER, original_adapter)
+        if original_adapter:
+            PlatformRegistry.register(PlatformType.TWITTER, original_adapter)
 
 
 # =============================================================================
@@ -103,12 +101,12 @@ def register_mock_adapter():
 
 
 @pytest.mark.anyio
-async def test_post_dispatcher_success_flow(db_session: Session):
+async def test_post_dispatcher_success_flow(db_session: AsyncSession):
     account_service = AccountService(db_session)
     campaign_service = CampaignService(db_session)
     history_service = HistoryService(db_session)
 
-    account = account_service.create_account(
+    account = await account_service.create_account(
         CreateAccountCommand(
             platform=PlatformType.TWITTER,
             handle="dispatcher_bot",
@@ -117,10 +115,10 @@ async def test_post_dispatcher_success_flow(db_session: Session):
     )
     await account_throttler.reset(account.id)
 
-    campaign = campaign_service.create_campaign(
+    campaign = await campaign_service.create_campaign(
         CreateCampaignCommand(name="Auto Campaign", status=CampaignStatus.ACTIVE)
     )
-    post = campaign_service.queue_post(
+    post = await campaign_service.queue_post(
         QueuePostCommand(
             campaign_id=campaign.id,
             account_id=account.id,
@@ -133,24 +131,24 @@ async def test_post_dispatcher_success_flow(db_session: Session):
     dispatched = await run_post_dispatcher(db=db_session)
     assert dispatched == 1
 
-    refreshed_post = campaign_service.get_post_by_id_or_raise(post.id)
+    refreshed_post = await campaign_service.get_post_by_id_or_raise(post.id)
     assert refreshed_post.status == PostStatus.PUBLISHED
     assert refreshed_post.platform_post_id == "mock_post_123"
 
-    db_session.refresh(account)
+    await db_session.refresh(account)
     assert account.daily_posts_sent == 1
 
-    logs = history_service.list_activities(entity_id=post.id)
+    logs = await history_service.list_activities(entity_id=post.id)
     assert len(logs) == 1
     assert logs[0].activity_type.value == "post_published"
 
 
 @pytest.mark.anyio
-async def test_post_dispatcher_skips_when_quota_exhausted(db_session: Session):
+async def test_post_dispatcher_skips_when_quota_exhausted(db_session: AsyncSession):
     account_service = AccountService(db_session)
     campaign_service = CampaignService(db_session)
 
-    account = account_service.create_account(
+    account = await account_service.create_account(
         CreateAccountCommand(
             platform=PlatformType.TWITTER,
             handle="exhausted_bot",
@@ -158,12 +156,12 @@ async def test_post_dispatcher_skips_when_quota_exhausted(db_session: Session):
         )
     )
     account.daily_posts_sent = 1
-    db_session.commit()
+    await db_session.commit()
 
-    campaign = campaign_service.create_campaign(
+    campaign = await campaign_service.create_campaign(
         CreateCampaignCommand(name="Camp", status=CampaignStatus.ACTIVE)
     )
-    post = campaign_service.queue_post(
+    post = await campaign_service.queue_post(
         QueuePostCommand(
             campaign_id=campaign.id,
             account_id=account.id,
@@ -176,7 +174,7 @@ async def test_post_dispatcher_skips_when_quota_exhausted(db_session: Session):
     dispatched = await run_post_dispatcher(db=db_session)
     assert dispatched == 0
 
-    refreshed = campaign_service.get_post_by_id_or_raise(post.id)
+    refreshed = await campaign_service.get_post_by_id_or_raise(post.id)
     assert refreshed.status == PostStatus.SCHEDULED
 
 
@@ -186,13 +184,13 @@ async def test_post_dispatcher_skips_when_quota_exhausted(db_session: Session):
 
 
 @pytest.mark.anyio
-async def test_dm_dispatcher_success_flow(db_session: Session):
+async def test_dm_dispatcher_success_flow(db_session: AsyncSession):
     account_service = AccountService(db_session)
     outreach_service = OutreachService(db_session)
     history_service = HistoryService(db_session)
 
     # 1. Seed account & reset throttle
-    account = account_service.create_account(
+    account = await account_service.create_account(
         CreateAccountCommand(
             platform=PlatformType.TWITTER,
             handle="sender_bot",
@@ -202,7 +200,7 @@ async def test_dm_dispatcher_success_flow(db_session: Session):
     await account_throttler.reset(account.id)
 
     # 2. Seed lead in DISCOVERED stage
-    lead = outreach_service.create_lead(
+    lead = await outreach_service.create_lead(
         CreateLeadCommand(
             platform=PlatformType.TWITTER,
             handle="prospect_user",
@@ -212,7 +210,7 @@ async def test_dm_dispatcher_success_flow(db_session: Session):
     )
 
     # 3. Stage and approve cold DM
-    staged = outreach_service.stage_message(
+    staged = await outreach_service.stage_message(
         StageMessageCommand(
             lead_id=lead.id,
             account_id=account.id,
@@ -220,7 +218,7 @@ async def test_dm_dispatcher_success_flow(db_session: Session):
             channel=OutreachChannel.DM,
         )
     )
-    outreach_service.review_message(
+    await outreach_service.review_message(
         ReviewMessageCommand(
             message_id=staged.id,
             status=OutreachMessageStatus.APPROVED,
@@ -232,31 +230,31 @@ async def test_dm_dispatcher_success_flow(db_session: Session):
     assert dispatched == 1
 
     # 5. Verify message dispatched and thread ID recorded
-    refreshed_msg = outreach_service.get_message_by_id_or_raise(staged.id)
+    refreshed_msg = await outreach_service.get_message_by_id_or_raise(staged.id)
     assert refreshed_msg.status == OutreachMessageStatus.DISPATCHED
     assert refreshed_msg.platform_message_id == "mock_dm_thread_123"
 
     # 6. Verify lead advanced from DISCOVERED -> CONTACTED
-    refreshed_lead = outreach_service.get_lead_by_id_or_raise(lead.id)
+    refreshed_lead = await outreach_service.get_lead_by_id_or_raise(lead.id)
     assert refreshed_lead.stage == LeadStage.CONTACTED
 
     # 7. Verify daily DM count incremented
-    db_session.refresh(account)
+    await db_session.refresh(account)
     assert account.daily_dms_sent == 1
 
     # 8. Verify audit log entry created
-    logs = history_service.list_activities(entity_id=staged.id)
+    logs = await history_service.list_activities(entity_id=staged.id)
     assert len(logs) == 1
     assert logs[0].activity_type.value == "message_dispatched"
 
 
 @pytest.mark.anyio
-async def test_dm_dispatcher_skips_when_quota_exhausted(db_session: Session):
+async def test_dm_dispatcher_skips_when_quota_exhausted(db_session: AsyncSession):
     account_service = AccountService(db_session)
     outreach_service = OutreachService(db_session)
 
     # Account with daily limit reached
-    account = account_service.create_account(
+    account = await account_service.create_account(
         CreateAccountCommand(
             platform=PlatformType.TWITTER,
             handle="dm_exhausted_bot",
@@ -264,12 +262,12 @@ async def test_dm_dispatcher_skips_when_quota_exhausted(db_session: Session):
         )
     )
     account.daily_dms_sent = 1
-    db_session.commit()
+    await db_session.commit()
 
-    lead = outreach_service.create_lead(
+    lead = await outreach_service.create_lead(
         CreateLeadCommand(platform=PlatformType.TWITTER, handle="prospect_two")
     )
-    staged = outreach_service.stage_message(
+    staged = await outreach_service.stage_message(
         StageMessageCommand(
             lead_id=lead.id,
             account_id=account.id,
@@ -277,36 +275,36 @@ async def test_dm_dispatcher_skips_when_quota_exhausted(db_session: Session):
         )
     )
     staged.status = OutreachMessageStatus.APPROVED
-    db_session.commit()
+    await db_session.commit()
 
     dispatched = await run_dm_dispatcher(db=db_session)
     assert dispatched == 0
 
-    refreshed = outreach_service.get_message_by_id_or_raise(staged.id)
+    refreshed = await outreach_service.get_message_by_id_or_raise(staged.id)
     assert refreshed.status == OutreachMessageStatus.APPROVED
 
 
 @pytest.mark.anyio
-async def test_dm_dispatcher_failure_flow(db_session: Session):
+async def test_dm_dispatcher_failure_flow(db_session: AsyncSession):
     account_service = AccountService(db_session)
     outreach_service = OutreachService(db_session)
 
-    account = account_service.create_account(
+    account = await account_service.create_account(
         CreateAccountCommand(platform=PlatformType.TWITTER, handle="fail_sender")
     )
     await account_throttler.reset(account.id)
 
-    lead = outreach_service.create_lead(
+    lead = await outreach_service.create_lead(
         CreateLeadCommand(platform=PlatformType.TWITTER, handle="fail_lead")
     )
-    staged = outreach_service.stage_message(
+    staged = await outreach_service.stage_message(
         StageMessageCommand(
             lead_id=lead.id,
             account_id=account.id,
             content="Testing failure",
         )
     )
-    outreach_service.review_message(
+    await outreach_service.review_message(
         ReviewMessageCommand(message_id=staged.id, status=OutreachMessageStatus.APPROVED)
     )
 
@@ -319,7 +317,7 @@ async def test_dm_dispatcher_failure_flow(db_session: Session):
         dispatched = await run_dm_dispatcher(db=db_session)
         assert dispatched == 0
 
-    refreshed = outreach_service.get_message_by_id_or_raise(staged.id)
+    refreshed = await outreach_service.get_message_by_id_or_raise(staged.id)
     assert refreshed.status == OutreachMessageStatus.FAILED
     assert "Twitter 429 Rate Limit" in (refreshed.last_error_message or "")
 
@@ -330,15 +328,15 @@ async def test_dm_dispatcher_failure_flow(db_session: Session):
 
 
 @pytest.mark.anyio
-async def test_watcher_worker_scrapes_and_generates_matches(db_session: Session):
+async def test_watcher_worker_scrapes_and_generates_matches(db_session: AsyncSession):
     account_service = AccountService(db_session)
     trigger_service = TriggerService(db_session)
 
-    scraper = account_service.create_account(
+    scraper = await account_service.create_account(
         CreateAccountCommand(platform=PlatformType.TWITTER, handle="scraper_account")
     )
 
-    handle = trigger_service.add_watched_handle(
+    handle = await trigger_service.add_watched_handle(
         AddWatchedHandleCommand(
             platform=PlatformType.TWITTER,
             handle="@competitor_brand",
@@ -346,7 +344,7 @@ async def test_watcher_worker_scrapes_and_generates_matches(db_session: Session)
         )
     )
 
-    trigger_service.create_rule(
+    await trigger_service.create_rule(
         CreateTriggerRuleCommand(
             name="Alternative Keyword Rule",
             platform=PlatformType.TWITTER,
@@ -361,12 +359,12 @@ async def test_watcher_worker_scrapes_and_generates_matches(db_session: Session)
     matches_created = await run_watcher_worker(db=db_session)
     assert matches_created == 1
 
-    matches = trigger_service.list_matches()
+    matches = await trigger_service.list_matches()
     assert len(matches) == 1
     assert matches[0].platform_post_id == "tweet_scraped_999"
     assert matches[0].status == TriggerMatchStatus.PENDING_REVIEW
 
-    db_session.refresh(handle)
+    await db_session.refresh(handle)
     assert handle.last_scraped_at is not None
 
 
@@ -376,12 +374,12 @@ async def test_watcher_worker_scrapes_and_generates_matches(db_session: Session)
 
 
 @pytest.mark.anyio
-async def test_quota_reset_worker(db_session: Session, monkeypatch: pytest.MonkeyPatch):
+async def test_quota_reset_worker(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
     account_service = AccountService(db_session)
-    mock_sync = MagicMock()
+    mock_sync = AsyncMock()
     monkeypatch.setattr("app.automation.workers.quota_reset_worker.sync_replica", mock_sync)
 
-    account = account_service.create_account(
+    account = await account_service.create_account(
         CreateAccountCommand(
             platform=PlatformType.TWITTER,
             handle="stale_counter_bot",
@@ -391,12 +389,12 @@ async def test_quota_reset_worker(db_session: Session, monkeypatch: pytest.Monke
     account.daily_posts_sent = 5
     account.daily_dms_sent = 8
     account.daily_counters_reset_at = datetime.now(UTC) - timedelta(hours=25)
-    db_session.commit()
+    await db_session.commit()
 
     reset_count = await run_quota_reset_worker(db=db_session)
     assert reset_count == 1
 
-    db_session.refresh(account)
+    await db_session.refresh(account)
     assert account.daily_posts_sent == 0
     assert account.daily_dms_sent == 0
     mock_sync.assert_called_once()
