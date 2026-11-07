@@ -1380,9 +1380,9 @@ export const TriggersPage: React.FC = () => {
                   </div>
                   <input
                     type="range"
-                    min={5}
-                    max={240}
-                    step={5}
+                    min={60}
+                    max={720}
+                    step={30}
                     value={handleFreq}
                     onChange={(e) => setHandleFreq(Number(e.target.value))}
                     className="w-full h-1.5 bg-slate-200 rounded-lg accent-[#0E3A75] cursor-pointer"

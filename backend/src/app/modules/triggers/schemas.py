@@ -30,7 +30,7 @@ class WatchedHandleCreateRequest(BaseModel):
         examples=["@competitor_ceo", "competitor_brand"],
     )
     display_name: str | None = Field(None, max_length=150)
-    scrape_frequency_minutes: int = Field(default=30, ge=5, le=1440)
+    scrape_frequency_minutes: int = Field(default=180, ge=60, le=1440)
     extra_metadata: dict[str, Any] = Field(default_factory=dict)
 
     def to_command(self) -> AddWatchedHandleCommand:

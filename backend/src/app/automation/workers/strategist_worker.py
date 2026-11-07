@@ -65,7 +65,9 @@ async def _build_review_digest(db: AsyncSession) -> str:
     approved_dms = [
         f"@{d.lead.handle}"
         for d in recent_dms
-        if d.lead and d.status in (OutreachMessageStatus.APPROVED, OutreachMessageStatus.DISPATCHED)
+        if d.lead
+        and d.status
+        in (OutreachMessageStatus.APPROVED, OutreachMessageStatus.DISPATCHED)
     ]
     rejected_dms = [
         f"@{d.lead.handle} (Reason: {d.last_error_message or 'Dismissed by operator'})"
@@ -84,7 +86,9 @@ async def _build_review_digest(db: AsyncSession) -> str:
         if m.status in (TriggerMatchStatus.APPROVED, TriggerMatchStatus.DISPATCHED)
     ]
     ignored_matches = [
-        f"@{m.author_handle}" for m in recent_matches if m.status == TriggerMatchStatus.IGNORED
+        f"@{m.author_handle}"
+        for m in recent_matches
+        if m.status == TriggerMatchStatus.IGNORED
     ]
     pending_matches = [
         f"@{m.author_handle}"
@@ -137,15 +141,13 @@ async def execute_autonomous_cycle(
     if not active_state.session_id:
         return False
 
-    logger.info(
-        "🧠 Autonomous Strategist waking up for Cycle #%d...",
-        active_state.cycle_count + 1,
-    )
+    logger.info("🧠 Autonomous Strategist waking up for cycle execution...")
 
     active_state.status = StrategistStatus.RUNNING
-    active_state.current_step = "Waking up: evaluating marketing telemetry & review outcomes..."
+    active_state.current_step = (
+        "Waking up: evaluating marketing telemetry & review outcomes..."
+    )
     active_state.last_cycle_started_at = datetime.now(UTC)
-    active_state.cycle_count += 1
     await db.commit()
 
     autonomy_directive = (
@@ -173,9 +175,12 @@ async def execute_autonomous_cycle(
 
         await db.refresh(active_state)
 
+        # Synchronize cycle count directly with verified completed assistant turns
+        await service._sync_cycle_count(active_state)
+
         if active_state.status == StrategistStatus.PAUSED:
             logger.info(
-                "⏸️ Cycle #%d finished, keeping operator PAUSED state.", active_state.cycle_count
+                "⏸️ Cycle finished, keeping operator PAUSED state."
             )
             return False
 
@@ -190,7 +195,7 @@ async def execute_autonomous_cycle(
             await db.commit()
 
         logger.info(
-            "✅ Autonomous Strategist finished Cycle #%d. Status: %s",
+            "✅ Autonomous Strategist finished cycle. Verified completed: %d. Status: %s",
             active_state.cycle_count,
             active_state.status.value,
         )
@@ -204,6 +209,7 @@ async def execute_autonomous_cycle(
         paused_state.next_cycle_at = None
         paused_state.current_step = "Autonomous background execution paused by operator."
         await db.commit()
+        await service._sync_cycle_count(paused_state)
         return False
 
     except Exception as exc:
@@ -216,6 +222,7 @@ async def execute_autonomous_cycle(
             refreshed.sleep_rationale = f"Cycle error ({exc}). Retrying in 30 minutes."
             refreshed.current_step = "Recovering from error; scheduled retry in 30m."
             await db.commit()
+        await service._sync_cycle_count(refreshed)
         return False
 
     finally:
@@ -223,6 +230,10 @@ async def execute_autonomous_cycle(
 
 
 async def run_strategist_heartbeat(db: AsyncSession | None = None) -> int:
+    """
+    Periodic heartbeat worker invoked by APScheduler every 60 seconds.
+    Returns 1 if a cycle was executed, 0 otherwise.
+    """
     owns_session = db is None
     session = db if db is not None else async_session_factory()
 

@@ -49,7 +49,7 @@ class WatchedHandle(AuditBase):
     )
     scrape_frequency_minutes: Mapped[int] = mapped_column(
         Integer,
-        default=30,
+        default=180,
         nullable=False,
     )
     last_scraped_at: Mapped[datetime | None] = mapped_column(

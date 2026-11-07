@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import AutonomyLevel, ChatRole, StrategistStatus
@@ -30,6 +30,30 @@ class StrategistService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def _sync_cycle_count(self, state: StrategistState) -> int:
+        """Synchronizes state.cycle_count with the exact number of completed assistant briefings in DB."""
+        if not state.session_id:
+            state.cycle_count = 0
+            return 0
+
+        actual_count = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(ChatMessage)
+                .where(
+                    ChatMessage.session_id == state.session_id,
+                    ChatMessage.role == ChatRole.ASSISTANT,
+                )
+            )
+        ) or 0
+
+        if state.cycle_count != actual_count:
+            state.cycle_count = actual_count
+            await self.db.commit()
+            await self.db.refresh(state)
+
+        return actual_count
+
     async def get_or_create_state(self) -> StrategistState:
         stmt = select(StrategistState).order_by(StrategistState.created_at.desc()).limit(1)
         result = await self.db.execute(stmt)
@@ -51,6 +75,8 @@ class StrategistService:
                 state.session_id = session.id
                 await self.db.commit()
                 await self.db.refresh(state)
+
+            await self._sync_cycle_count(state)
             return state
 
         copilot_service = CopilotService(self.db)
@@ -215,7 +241,6 @@ class StrategistService:
         for idx, msg in enumerate(all_msgs):
             if msg.id == target_msg_id:
                 ids_to_delete.append(msg.id)
-                # Also remove the preceding automatic wake-up user prompt for this cycle
                 if idx > 0 and all_msgs[idx - 1].role == ChatRole.USER:
                     ids_to_delete.append(all_msgs[idx - 1].id)
                 break
@@ -225,8 +250,7 @@ class StrategistService:
                 delete(ToolExecutionLog).where(ToolExecutionLog.message_id.in_(ids_to_delete))
             )
             await self.db.execute(delete(ChatMessage).where(ChatMessage.id.in_(ids_to_delete)))
-            state.cycle_count = max(0, state.cycle_count - 1)
             await self.db.commit()
-            await self.db.refresh(state)
 
+        await self._sync_cycle_count(state)
         return state

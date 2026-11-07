@@ -12,7 +12,7 @@ class AddWatchedHandleCommand:
     platform: PlatformType
     handle: str
     display_name: str | None = None
-    scrape_frequency_minutes: int = 30
+    scrape_frequency_minutes: int = 180  
     extra_metadata: dict[str, Any] = field(default_factory=dict)
 
 

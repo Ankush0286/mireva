@@ -22,22 +22,22 @@ async def _create_account_via_api(client: AsyncClient, handle: str = "api_trigge
 # Watched Handles API Integration Tests
 # =============================================================================
 
-
 @pytest.mark.anyio
 async def test_watched_handle_api_lifecycle(client: AsyncClient):
-    # 1. Add watched handle (testing leading @ sanitization)
+    # 1. Add watched handle (testing leading @ sanitization and safe frequency >= 60m)
     add_res = await client.post(
         "/api/v1/triggers/handles",
         json={
             "platform": "twitter",
             "handle": "@competitor_founder",
             "display_name": "Competitor Founder",
-            "scrape_frequency_minutes": 20,
+            "scrape_frequency_minutes": 120,  # Updated from 20 to safe >= 60m
         },
     )
     assert add_res.status_code == 201
     data = add_res.json()
     assert data["handle"] == "competitor_founder"  # Stripped @
+    assert data["scrape_frequency_minutes"] == 120
     handle_id = data["id"]
 
     # 2. Get by ID
@@ -50,14 +50,14 @@ async def test_watched_handle_api_lifecycle(client: AsyncClient):
     assert list_res.status_code == 200
     assert len(list_res.json()) >= 1
 
-    # 4. Patch
+    # 4. Patch (testing safe frequency update)
     patch_res = await client.patch(
         f"/api/v1/triggers/handles/{handle_id}",
-        json={"display_name": "Updated Founder", "scrape_frequency_minutes": 45},
+        json={"display_name": "Updated Founder", "scrape_frequency_minutes": 240},  # Updated from 45 to >= 60m
     )
     assert patch_res.status_code == 200
     assert patch_res.json()["display_name"] == "Updated Founder"
-    assert patch_res.json()["scrape_frequency_minutes"] == 45
+    assert patch_res.json()["scrape_frequency_minutes"] == 240
 
     # 5. Delete
     del_res = await client.delete(f"/api/v1/triggers/handles/{handle_id}")
@@ -66,6 +66,16 @@ async def test_watched_handle_api_lifecycle(client: AsyncClient):
     # 6. Verify 404
     assert (await client.get(f"/api/v1/triggers/handles/{handle_id}")).status_code == 404
 
+    # 7. Verify that setting unsafe interval (< 60m) returns 422
+    unsafe_res = await client.post(
+        "/api/v1/triggers/handles",
+        json={
+            "platform": "twitter",
+            "handle": "unsafe_bot",
+            "scrape_frequency_minutes": 15,  # Too low, must fail
+        },
+    )
+    assert unsafe_res.status_code == 422
 
 @pytest.mark.anyio
 async def test_create_duplicate_watched_handle_returns_409(client: AsyncClient):
