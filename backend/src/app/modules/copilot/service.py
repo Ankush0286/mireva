@@ -82,9 +82,7 @@ class CopilotService:
         await self.db.execute(
             delete(ToolExecutionLog).where(ToolExecutionLog.session_id == session.id)
         )
-        await self.db.execute(
-            delete(ChatMessage).where(ChatMessage.session_id == session.id)
-        )
+        await self.db.execute(delete(ChatMessage).where(ChatMessage.session_id == session.id))
         await self.db.delete(session)
         await self.db.commit()
 
@@ -127,6 +125,35 @@ class CopilotService:
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    async def delete_messages_from(
+        self, session_id: UUID | str, message_id: UUID | str
+    ) -> list[UUID]:
+        """
+        Deletes the specified message and all subsequent messages in the session.
+        Cleans up associated tool execution logs to prevent orphaned records.
+        """
+        target_session_id = _ensure_uuid(session_id)
+        target_msg_id = _ensure_uuid(message_id)
+
+        target_msg = await self.get_message_by_id_or_raise(target_msg_id)
+
+        stmt = select(ChatMessage).where(
+            ChatMessage.session_id == target_session_id,
+            ChatMessage.created_at >= target_msg.created_at,
+        )
+        result = await self.db.execute(stmt)
+        messages_to_delete = list(result.scalars().all())
+        deleted_ids = [m.id for m in messages_to_delete]
+
+        if deleted_ids:
+            await self.db.execute(
+                delete(ToolExecutionLog).where(ToolExecutionLog.message_id.in_(deleted_ids))
+            )
+            await self.db.execute(delete(ChatMessage).where(ChatMessage.id.in_(deleted_ids)))
+            await self.db.commit()
+
+        return deleted_ids
 
     async def get_conversation_context(
         self, session_id: UUID | str, max_messages: int = 20

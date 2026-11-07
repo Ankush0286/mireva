@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import { useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -9,6 +15,8 @@ import {
   Check,
   RotateCcw,
   ArrowUpRight,
+  Pencil,
+  X,
 } from "lucide-react";
 import {
   api,
@@ -242,7 +250,14 @@ export const ChatPage: React.FC<ChatPageProps> = ({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const [decisions, setDecisions] = useState<Record<string, ApprovalDecision>>({});
+  // Edit Message State
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+
+  // Approval Decision State
+  const [decisions, setDecisions] = useState<Record<string, ApprovalDecision>>(
+    {},
+  );
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -250,10 +265,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({
   const abortControllerRef = useRef<AbortController | null>(null);
   const initialPromptHandled = useRef(false);
 
-  // Fetch session metadata to render active title in top sticky header
   const { data: sessionData } = useQuery<ChatSession>({
     queryKey: ["copilot", "session", sessionId],
-    queryFn: () => (sessionId ? api.copilot.getSession(sessionId) : Promise.reject()),
+    queryFn: () =>
+      sessionId ? api.copilot.getSession(sessionId) : Promise.reject(),
     enabled: Boolean(sessionId),
     staleTime: 1000 * 60 * 5,
   });
@@ -333,6 +348,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
     setIsStreaming(false);
   };
 
+  // 1. Core Send Message Turn Handler
   const handleSendMessage = useCallback(
     async (promptText: string, modelId?: string, thinking?: boolean) => {
       const textToSend = promptText.trim();
@@ -442,7 +458,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
               }
               return updated;
             });
-          }
+          },
         );
 
         queryClient.invalidateQueries({ queryKey: queryKeys.copilot.sessions });
@@ -485,12 +501,63 @@ export const ChatPage: React.FC<ChatPageProps> = ({
     }
   }, [location.state, handleSendMessage]);
 
+  // 2. Edit & Resend Prompt Handler
+  const handleSaveAndResend = async (
+    userMsgIdx: number,
+    userMsg: ExtendedChatMessage,
+  ) => {
+    if (!editText.trim() || isStreaming) return;
+    const textToSubmit = editText.trim();
+    setEditingMessageId(null);
+
+    // Truncate messages in local UI state from the edited message onwards
+    setMessages((prev) => prev.slice(0, userMsgIdx));
+
+    // If message is saved in database, prune it and all subsequent turns from DB
+    if (sessionId && !userMsg.id.startsWith("user-")) {
+      try {
+        await api.copilot.deleteMessagesFrom(sessionId, userMsg.id);
+      } catch (err) {
+        console.error("Failed to prune message from backend:", err);
+      }
+    }
+
+    // Stream fresh turn with edited prompt
+    handleSendMessage(textToSubmit);
+  };
+
+  // 3. Retry Turn Handler (Prunes assistant reply + previous user turn and resends)
+  const handleRetry = async (assistantIdx: number) => {
+    if (isStreaming) return;
+    const userIdx = assistantIdx - 1;
+    if (userIdx < 0) return;
+
+    const userMsg = messages[userIdx];
+    const userPrompt = userMsg.content;
+
+    // Prune the previous user turn and assistant reply from local UI state
+    setMessages((prev) => prev.slice(0, userIdx));
+
+    // Prune database from that turn onwards so previous response is deleted
+    if (sessionId && !userMsg.id.startsWith("user-")) {
+      try {
+        await api.copilot.deleteMessagesFrom(sessionId, userMsg.id);
+      } catch (err) {
+        console.error("Failed to prune turn for retry from backend:", err);
+      }
+    }
+
+    // Resend the exact prompt fresh in-place
+    handleSendMessage(userPrompt);
+  };
+
+  // 4. Human Decision Dispatcher for ApprovalCard
   const handleApprovalDecision = async (
     toolId: string,
     actionType: string,
     title: string,
     entityId: string | undefined,
-    decision: ApprovalDecision
+    decision: ApprovalDecision,
   ) => {
     setActiveActionId(toolId);
     setDecisions((prev) => ({ ...prev, [toolId]: decision }));
@@ -528,7 +595,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({
     }
   };
 
-  // Find the latest pending approval tool call across messages
   const latestPendingApproval = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
@@ -546,7 +612,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({
     return null;
   }, [messages, decisions]);
 
-  // Aggregate global session usage (latest cumulative snapshot emitted by backend)
   const latestUsage = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const usage = messages[i].extra_metadata?.usage as UsageState | undefined;
@@ -565,7 +630,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
 
   return (
     <div className="relative h-full flex flex-col justify-between max-w-4xl mx-auto w-full font-sans select-none text-[#09122A] overflow-hidden">
-      {/* ⭐ 0. PERSISTENT GLOBAL TELEMETRY HEADER (Sticky outside scroll area) ⭐ */}
+      {/* 0. PERSISTENT GLOBAL TELEMETRY HEADER */}
       {messages.length > 0 && (
         <div className="w-full flex items-center justify-between pt-1 pb-2.5 px-3 sm:px-0 shrink-0 z-20 border-b border-[#E2ECF7]/50 mb-1 animate-fade-up-1">
           <div className="flex items-center gap-2 min-w-0">
@@ -575,13 +640,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({
             </span>
           </div>
 
-          {latestUsage && (
-            <UsageMeter usage={latestUsage} variant="Inline" />
-          )}
+          {latestUsage && <UsageMeter usage={latestUsage} variant="Inline" />}
         </div>
       )}
 
-      {/* 1. Main Conversation Stream (Scrollable) */}
+      {/* 1. Main Conversation Stream */}
       <div
         className={`flex-1 overflow-y-auto px-3 sm:px-6 py-3 scrollbar-none flex flex-col ${
           messages.length === 0 ? "justify-center" : "justify-start"
@@ -726,37 +789,91 @@ export const ChatPage: React.FC<ChatPageProps> = ({
                 !hasTextContent &&
                 !hasRealReasoning;
 
+              // USER MESSAGE WITH INLINE EDIT & RESEND
               if (isUser) {
-                return (
-                  <div key={msg.id} className="group flex flex-col items-end">
-                    <div className="px-4.5 py-2.5 rounded-2xl rounded-tr-sm bg-[#0E3A75] text-white text-[14px] leading-relaxed shadow-[0_4px_14px_rgba(14,58,117,0.15)] max-w-[78%] select-text">
-                      <p className="whitespace-pre-wrap">{msg.content}</p>
-                    </div>
+                const isEditing = editingMessageId === msg.id;
 
-                    <div className="flex items-center gap-1 mt-1 pr-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                      <button
-                        type="button"
-                        onClick={() => handleCopy(msg.id, msg.content)}
-                        title="Copy prompt"
-                        className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium text-slate-400 hover:text-[#09122A] hover:bg-white/70 transition-colors cursor-pointer"
-                      >
-                        {copiedId === msg.id ? (
-                          <>
-                            <Check size={12} className="text-emerald-600" />
-                            <span className="text-emerald-600">Copied</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy size={12} />
-                            <span>Copy</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
+                return (
+                  <div
+                    key={msg.id}
+                    className="group flex flex-col items-end w-full"
+                  >
+                    {isEditing ? (
+                      <div className="w-full max-w-[85%] rounded-2xl bg-white border border-[#0E3A75] p-3 shadow-md animate-fade-up-1">
+                        <textarea
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          rows={Math.min(
+                            6,
+                            Math.max(2, editText.split("\n").length),
+                          )}
+                          className="w-full text-[14px] text-[#09122A] bg-transparent outline-none resize-none leading-relaxed select-text"
+                          autoFocus
+                        />
+                        <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t border-[#F0F5FA]">
+                          <button
+                            type="button"
+                            onClick={() => setEditingMessageId(null)}
+                            className="px-3 py-1 rounded-lg text-xs font-semibold text-slate-500 hover:bg-slate-100 cursor-pointer transition-colors"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveAndResend(idx, msg)}
+                            disabled={!editText.trim() || isStreaming}
+                            className="flex items-center gap-1 px-3.5 py-1 rounded-lg bg-[#0E3A75] hover:bg-[#092854] text-white text-xs font-bold cursor-pointer transition-all disabled:opacity-50"
+                          >
+                            <span>Send</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="px-4.5 py-2.5 rounded-2xl rounded-tr-sm bg-[#0E3A75] text-white text-[14px] leading-relaxed shadow-[0_4px_14px_rgba(14,58,117,0.15)] max-w-[78%] select-text">
+                          <p className="whitespace-pre-wrap">{msg.content}</p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 mt-1 pr-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingMessageId(msg.id);
+                              setEditText(msg.content);
+                            }}
+                            title="Edit & Resend prompt"
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium text-slate-400 hover:text-[#09122A] hover:bg-white/70 transition-colors cursor-pointer"
+                          >
+                            <Pencil size={11} />
+                            <span>Edit</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(msg.id, msg.content)}
+                            title="Copy prompt"
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium text-slate-400 hover:text-[#09122A] hover:bg-white/70 transition-colors cursor-pointer"
+                          >
+                            {copiedId === msg.id ? (
+                              <>
+                                <Check size={12} className="text-emerald-600" />
+                                <span className="text-emerald-600">Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy size={12} />
+                                <span>Copy</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 );
               }
 
+              // ASSISTANT MESSAGE WITH IN-PLACE RETRY
               return (
                 <div
                   key={msg.id}
@@ -833,14 +950,13 @@ export const ChatPage: React.FC<ChatPageProps> = ({
                               )}
                             </button>
 
+                            {/* In-Place Retry (Removes previous turn and re-runs against the same prompt) */}
                             {idx > 0 && messages[idx - 1]?.role === "user" && (
                               <button
                                 type="button"
-                                onClick={() =>
-                                  handleSendMessage(messages[idx - 1].content)
-                                }
+                                onClick={() => handleRetry(idx)}
                                 disabled={isStreaming}
-                                title="Regenerate response"
+                                title="Regenerate this response in place"
                                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11.5px] font-semibold text-slate-500 hover:text-[#0E3A75] hover:bg-[#F4F8FD] transition-colors cursor-pointer disabled:opacity-40"
                               >
                                 <RotateCcw size={13} />
@@ -849,7 +965,6 @@ export const ChatPage: React.FC<ChatPageProps> = ({
                             )}
                           </div>
 
-                          {/* Clean Timestamp without redundant usage clutter */}
                           <span className="font-mono text-[10px] text-slate-300">
                             {new Date(msg.created_at).toLocaleTimeString([], {
                               hour: "2-digit",
@@ -870,51 +985,64 @@ export const ChatPage: React.FC<ChatPageProps> = ({
       </div>
 
       {/* 2. Sticky Approval Card (Tucked Behind Chatbox with Zero Gap) */}
-      {latestPendingApproval && (() => {
-        const tool = latestPendingApproval;
-        const args = parseToolArguments(tool.input_arguments);
-        const result = parseToolResult(tool.output_result) || {};
+      {latestPendingApproval &&
+        (() => {
+          const tool = latestPendingApproval;
+          const args = parseToolArguments(tool.input_arguments);
+          const result = parseToolResult(tool.output_result) || {};
 
-        const actionType = result.action_type || args.action_type || "general";
-        const title = result.title || args.title || "Action Approval Required";
-        const entityId = result.entity_id || result.id || args.entity_id || args.message_id || args.post_id;
-        const badgeLabel = result.badge_label || args.badge_label || "Review Gate";
+          const actionType =
+            result.action_type || args.action_type || "general";
+          const title =
+            result.title || args.title || "Action Approval Required";
+          const entityId =
+            result.entity_id ||
+            result.id ||
+            args.entity_id ||
+            args.message_id ||
+            args.post_id;
+          const badgeLabel =
+            result.badge_label || args.badge_label || "Review Gate";
 
-        const badgeType =
-          actionType === "outreach_dm"
-            ? "outreach"
-            : actionType === "trigger_reply"
-              ? "trigger"
-              : actionType === "publish_post"
-                ? "campaign"
-                : "default";
+          const badgeType =
+            actionType === "outreach_dm"
+              ? "outreach"
+              : actionType === "trigger_reply"
+                ? "trigger"
+                : actionType === "publish_post"
+                  ? "campaign"
+                  : "default";
 
-        const currentDecision = decisions[tool.id] ?? null;
+          const currentDecision = decisions[tool.id] ?? null;
 
-        return (
-          <div className="w-full max-w-3xl mx-auto px-3 sm:px-0 relative z-10 shrink-0">
-            <ApprovalCard
-              badge={badgeLabel}
-              badgeType={badgeType}
-              title={title}
-              meta={`Agent Tool: ${tool.tool_name}${entityId ? ` · ID: ${entityId}` : ""}`}
-              approveLabel={actionType === "outreach_dm" ? "Approve & Dispatch" : "Approve Action"}
-              rejectLabel="Dismiss"
-              decision={currentDecision}
-              isLoading={activeActionId === tool.id}
-              onDecide={(decision) =>
-                handleApprovalDecision(
-                  tool.id,
-                  actionType,
-                  title,
-                  entityId,
-                  decision
-                )
-              }
-            />
-          </div>
-        );
-      })()}
+          return (
+            <div className="w-full max-w-3xl mx-auto px-3 sm:px-0 relative z-10 shrink-0">
+              <ApprovalCard
+                badge={badgeLabel}
+                badgeType={badgeType}
+                title={title}
+                meta={`Agent Tool: ${tool.tool_name}${entityId ? ` · ID: ${entityId}` : ""}`}
+                approveLabel={
+                  actionType === "outreach_dm"
+                    ? "Approve & Dispatch"
+                    : "Approve Action"
+                }
+                rejectLabel="Dismiss"
+                decision={currentDecision}
+                isLoading={activeActionId === tool.id}
+                onDecide={(decision) =>
+                  handleApprovalDecision(
+                    tool.id,
+                    actionType,
+                    title,
+                    entityId,
+                    decision,
+                  )
+                }
+              />
+            </div>
+          );
+        })()}
 
       {/* 3. Docked Bottom Prompt Composer (Overlaps the bottom of the card with -mt-6 so card is tucked behind) */}
       <div

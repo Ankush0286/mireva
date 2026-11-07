@@ -100,7 +100,9 @@ async def list_sessions(
     offset: int = Query(default=0, ge=0),
     service: CopilotService = Depends(get_copilot_service),
 ) -> list[ChatSessionResponse]:
-    sessions = await service.list_sessions(include_archived=include_archived, limit=limit, offset=offset)
+    sessions = await service.list_sessions(
+        include_archived=include_archived, limit=limit, offset=offset
+    )
     return [ChatSessionResponse.model_validate(session) for session in sessions]
 
 
@@ -179,6 +181,19 @@ async def list_messages(
 ) -> list[ChatMessageResponse]:
     messages = await service.list_messages(session_id=session_id, limit=limit, offset=offset)
     return [ChatMessageResponse.model_validate(msg) for msg in messages]
+
+
+@router.delete(
+    "/sessions/{session_id}/messages/{message_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a message and all subsequent conversation turns",
+)
+async def delete_messages_from(
+    session_id: UUID,
+    message_id: UUID,
+    service: CopilotService = Depends(get_copilot_service),
+) -> None:
+    await service.delete_messages_from(session_id=session_id, message_id=message_id)
 
 
 @router.get(
