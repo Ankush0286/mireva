@@ -3,8 +3,10 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic_ai.models.test import TestModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.llm import marketing_agent
 from app.automation.scheduler import (
     get_scheduler,
     start_scheduler,
@@ -14,6 +16,10 @@ from app.automation.throttler import account_throttler
 from app.automation.workers.dm_dispatcher import run_dm_dispatcher
 from app.automation.workers.post_dispatcher import run_post_dispatcher
 from app.automation.workers.quota_reset_worker import run_quota_reset_worker
+from app.automation.workers.strategist_worker import (
+    _build_review_digest,
+    run_strategist_heartbeat,
+)
 from app.automation.workers.watcher_worker import run_watcher_worker
 from app.common.enums import (
     CampaignStatus,
@@ -22,6 +28,7 @@ from app.common.enums import (
     OutreachMessageStatus,
     PlatformType,
     PostStatus,
+    StrategistStatus,
     TriggerActionType,
     TriggerMatchStatus,
 )
@@ -39,6 +46,7 @@ from app.modules.outreach.commands import (
     StageMessageCommand,
 )
 from app.modules.outreach.service import OutreachService
+from app.modules.strategist.service import StrategistService
 from app.modules.triggers.commands import (
     AddWatchedHandleCommand,
     CreateTriggerRuleCommand,
@@ -313,7 +321,10 @@ async def test_dm_dispatcher_failure_flow(db_session: AsyncSession):
     mock_adapter.send_dm = AsyncMock(side_effect=RuntimeError("Twitter 429 Rate Limit"))
     mock_adapter.close = AsyncMock()
 
-    with patch("app.automation.workers.dm_dispatcher.PlatformRegistry.get_adapter", return_value=mock_adapter):
+    with patch(
+        "app.automation.workers.dm_dispatcher.PlatformRegistry.get_adapter",
+        return_value=mock_adapter,
+    ):
         dispatched = await run_dm_dispatcher(db=db_session)
         assert dispatched == 0
 
@@ -421,3 +432,33 @@ async def test_scheduler_lifecycle():
     stop_scheduler()
     await asyncio.sleep(0.01)
     assert sched.running is False
+
+
+@pytest.mark.anyio
+async def test_strategist_heartbeat_worker_and_review_digest(
+    db_session: AsyncSession,
+) -> None:
+    service = StrategistService(db_session)
+    state = await service.record_sleep(duration_minutes=60, rationale="Future wake")
+
+    # 1. Not due yet -> worker skips (returns 0)
+    assert await run_strategist_heartbeat(db=db_session) == 0
+
+    # 2. Age next_cycle_at into the past -> worker wakes up and executes cycle!
+    state.next_cycle_at = datetime.now(UTC) - timedelta(minutes=5)
+    await db_session.commit()
+
+    digest = await _build_review_digest(db_session)
+    assert "=== HUMAN REVIEW QUEUE OUTCOMES ===" in digest
+
+    mock_model = TestModel(
+        call_tools=["sleep"],
+        custom_output_text="Heartbeat cycle completed.",
+    )
+    with marketing_agent.override(model=mock_model):
+        ran_due = await run_strategist_heartbeat(db=db_session)
+        assert ran_due == 1
+
+    await db_session.refresh(state)
+    assert state.cycle_count == 1
+    assert state.status == StrategistStatus.SLEEPING

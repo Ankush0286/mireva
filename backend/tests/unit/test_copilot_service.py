@@ -261,3 +261,45 @@ async def test_log_tool_execution_invalid_message_raises(db_session: AsyncSessio
                 input_arguments={},
             )
         )
+
+
+@pytest.mark.anyio
+async def test_delete_messages_from_truncates_subsequent_turns(
+    db_session: AsyncSession,
+) -> None:
+    """Verifies editing/retrying a turn prunes that message, subsequent turns, and their tool logs."""
+    service = CopilotService(db_session)
+    session = await service.create_session(CreateChatSessionCommand(title="Edit Thread"))
+
+    m1 = await service.add_message(
+        AddChatMessageCommand(session_id=session.id, role=ChatRole.USER, content="Turn 1 User")
+    )
+    await service.add_message(
+        AddChatMessageCommand(
+            session_id=session.id, role=ChatRole.ASSISTANT, content="Turn 1 Assistant"
+        )
+    )
+    m3 = await service.add_message(
+        AddChatMessageCommand(session_id=session.id, role=ChatRole.USER, content="Turn 2 User")
+    )
+    m4 = await service.add_message(
+        AddChatMessageCommand(
+            session_id=session.id, role=ChatRole.ASSISTANT, content="Turn 2 Assistant"
+        )
+    )
+    await service.log_tool_execution(
+        LogToolExecutionCommand(
+            session_id=session.id,
+            message_id=m4.id,
+            tool_name="get_connected_accounts",
+            input_arguments={},
+        )
+    )
+
+    deleted_ids = await service.delete_messages_from(session.id, m3.id)
+    assert len(deleted_ids) == 2
+
+    remaining = await service.list_messages(session.id)
+    assert len(remaining) == 2
+    assert remaining[0].id == m1.id
+    assert len(await service.list_tool_executions(session.id)) == 0

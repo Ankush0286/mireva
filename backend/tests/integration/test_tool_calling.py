@@ -175,3 +175,42 @@ async def test_copilot_chat_and_sse_stream_api_endpoints(client: AsyncClient):
         # Assert components of the sentence since SSE chunks split it
         assert "Campaign" in stream_res.text
         assert "launch!" in stream_res.text
+
+@pytest.mark.anyio
+async def test_stream_agent_turn_persists_streamed_response_and_usage(
+    db_session: AsyncSession,
+) -> None:
+    """Verifies streaming token generation yields chunks, usage telemetry, and saves final reply."""
+    copilot_service = CopilotService(db_session)
+    session = await copilot_service.create_session(
+        CreateChatSessionCommand(title="Streaming Session")
+    )
+
+    deterministic_model = TestModel(
+        call_tools=[],
+        custom_output_text="Streaming viral hook 1, 2, 3!",
+    )
+
+    chunks: list[str] = []
+    usage_events: list[dict[str, object]] = []
+    async for item in stream_agent_turn(
+        db=db_session,
+        session_id=session.id,
+        user_prompt="Stream a viral hook",
+        model_override=deterministic_model,
+    ):
+        if isinstance(item, str):
+            chunks.append(item)
+        elif isinstance(item, dict) and item.get("__event__") == "usage":
+            usage_events.append(item)
+
+    full_text = "".join(chunks)
+    assert "Streaming viral hook 1, 2, 3!" in full_text
+    assert len(usage_events) == 1
+
+    messages = await copilot_service.list_messages(session.id)
+    assert len(messages) == 2
+    assert messages[1].role == ChatRole.ASSISTANT
+    assert messages[1].content == full_text
+    assert messages[1].token_count is not None
+    assert "usage" in messages[1].extra_metadata

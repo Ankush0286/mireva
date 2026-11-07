@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -93,6 +95,33 @@ async def set_strategist_model(
     service: StrategistService = Depends(get_strategist_service),
 ) -> StrategistStateResponse:
     state = await service.set_model(payload.model_id)
+    return StrategistStateResponse.model_validate(state)
+
+
+@router.post(
+    "/clear-context",
+    response_model=StrategistStateResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Clear all cycle logs and reset the strategist context window",
+)
+async def clear_strategist_context(
+    service: StrategistService = Depends(get_strategist_service),
+) -> StrategistStateResponse:
+    state = await service.clear_context_and_logs()
+    return StrategistStateResponse.model_validate(state)
+
+
+@router.delete(
+    "/cycles/{message_id}",
+    response_model=StrategistStateResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Delete a single cycle briefing and its associated tool logs",
+)
+async def delete_cycle_briefing(
+    message_id: UUID,
+    service: StrategistService = Depends(get_strategist_service),
+) -> StrategistStateResponse:
+    state = await service.delete_cycle_briefing(message_id)
     return StrategistStateResponse.model_validate(state)
 
 

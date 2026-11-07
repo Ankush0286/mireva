@@ -134,3 +134,33 @@ async def test_add_message_invalid_payload_returns_422(client: AsyncClient):
     )
     assert res.status_code == 422
     assert res.json()["error"] == "VALIDATION_ERROR"
+
+
+
+@pytest.mark.anyio
+async def test_delete_messages_from_api(client: AsyncClient) -> None:
+    session_res = await client.post(
+        "/api/v1/copilot/sessions",
+        json={"title": "Truncate API Test"},
+    )
+    session_id = session_res.json()["id"]
+
+    m1_res = await client.post(
+        f"/api/v1/copilot/sessions/{session_id}/messages",
+        json={"role": "user", "content": "First prompt"},
+    )
+    m2_res = await client.post(
+        f"/api/v1/copilot/sessions/{session_id}/messages",
+        json={"role": "assistant", "content": "First reply"},
+    )
+    m2_id = m2_res.json()["id"]
+
+    del_res = await client.delete(
+        f"/api/v1/copilot/sessions/{session_id}/messages/{m2_id}"
+    )
+    assert del_res.status_code == 204
+
+    list_res = await client.get(f"/api/v1/copilot/sessions/{session_id}/messages")
+    remaining = list_res.json()
+    assert len(remaining) == 1
+    assert remaining[0]["id"] == m1_res.json()["id"]
