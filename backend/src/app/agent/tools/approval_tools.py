@@ -25,23 +25,29 @@ async def request_human_approval(
 ) -> dict[str, Any]:
     """
     Checks autonomy policy. If in 'staged_review', halts for human approval.
-    If in 'full_auto', immediately auto-approves the entity in the database.
+    If in 'full_auto', idempotently auto-approves the entity in the database.
     """
     async with ctx.deps.db_session_scope() as db:
-        res = await db.execute(select(StrategistState).order_by(StrategistState.created_at.desc()).limit(1))
+        res = await db.execute(
+            select(StrategistState).order_by(StrategistState.created_at.desc()).limit(1)
+        )
         state = res.scalars().first()
         is_full_auto = state is not None and state.autonomy_level == AutonomyLevel.FULL_AUTO
 
         if is_full_auto:
-            # Auto-approve in database so background dispatchers send automatically
             if action_type == "outreach_dm" and entity_id:
                 outreach_service = OutreachService(db)
-                await outreach_service.review_message(
-                    ReviewMessageCommand(
-                        message_id=UUID(entity_id),
-                        status=OutreachMessageStatus.APPROVED,
+                msg = await outreach_service.get_message_by_id(UUID(entity_id))
+                if msg and msg.status in (
+                    OutreachMessageStatus.STAGED,
+                    OutreachMessageStatus.DRAFT,
+                ):
+                    await outreach_service.review_message(
+                        ReviewMessageCommand(
+                            message_id=msg.id,
+                            status=OutreachMessageStatus.APPROVED,
+                        )
                     )
-                )
             elif action_type == "trigger_reply" and entity_id:
                 trigger_service = TriggerService(db)
                 await trigger_service.review_match(
@@ -61,7 +67,6 @@ async def request_human_approval(
                 "status": "auto_approved_by_policy",
             }
 
-    # Staged review mode: requires human sign-off
     return {
         "approval_required": True,
         "auto_approved": False,

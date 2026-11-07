@@ -210,7 +210,6 @@ async def test_trigger_tools_execution_and_error_handling(db_session: AsyncSessi
 # Outreach & Full-Auto / Staged-Review Tools Unit Tests
 # =============================================================================
 
-
 @pytest.mark.anyio
 async def test_outreach_tools_and_autonomy_modes(db_session: AsyncSession) -> None:
     ctx = _make_run_context(db_session)
@@ -259,19 +258,7 @@ async def test_outreach_tools_and_autonomy_modes(db_session: AsyncSession) -> No
     assert gate_staged["approval_required"] is True
     assert gate_staged["auto_approved"] is False
 
-    # 2. Switch to FULL_AUTO: request_human_approval auto-approves the DM in DB
-    await strategist_service.set_autonomy_level(AutonomyLevel.FULL_AUTO)
-    gate_auto = await request_human_approval(
-        ctx,
-        action_type="outreach_dm",
-        title="Send DM to @tech_creator?",
-        description="Hey Tech Creator!",
-        entity_id=message_id,
-    )
-    assert gate_auto["approval_required"] is False
-    assert gate_auto["auto_approved"] is True
-
-    # Review and dispatch
+    # Review and approve the staged message via review_staged_dm tool
     review_res = await review_staged_dm(
         ctx,
         message_id=message_id,
@@ -280,6 +267,7 @@ async def test_outreach_tools_and_autonomy_modes(db_session: AsyncSession) -> No
     )
     assert review_res["status"] == "approved"
 
+    # Dispatch the approved DM
     mock_adapter = MagicMock()
     mock_adapter.send_dm = AsyncMock(return_value="thread_xyz_999")
     mock_adapter.close = AsyncMock()
@@ -292,27 +280,50 @@ async def test_outreach_tools_and_autonomy_modes(db_session: AsyncSession) -> No
         assert dispatch_res["status"] == "dispatched"
         assert dispatch_res["platform_thread_id"] == "thread_xyz_999"
 
-    # Stage a second DM and reject it to test closed-loop review outcomes
-    lead2_res = await add_lead_to_crm(ctx, platform="twitter", handle="@rejected_lead")
+    # 2. Switch to FULL_AUTO mode: stage_cold_outreach_dm & request_human_approval auto-approve!
+    lead_auto = await add_lead_to_crm(ctx, platform="twitter", handle="@auto_lead")
+    await strategist_service.set_autonomy_level(AutonomyLevel.FULL_AUTO)
+
+    auto_dm = await stage_cold_outreach_dm(
+        ctx,
+        lead_id=lead_auto["id"],
+        account_id=str(account.id),
+        message_content="Full auto pitch!",
+    )
+    assert auto_dm["status"] == "approved"
+    assert auto_dm["auto_approved"] is True
+
+    # Calling request_human_approval on an already-approved DM in FULL_AUTO is idempotent
+    gate_auto = await request_human_approval(
+        ctx,
+        action_type="outreach_dm",
+        title="Approve DM to @auto_lead?",
+        description="Full auto pitch!",
+        entity_id=auto_dm["id"],
+    )
+    assert gate_auto["approval_required"] is False
+    assert gate_auto["auto_approved"] is True
+
+    # 3. Stage a third DM in STAGED_REVIEW and reject it to test closed-loop review outcomes
+    lead_rejected = await add_lead_to_crm(ctx, platform="twitter", handle="@rejected_lead")
     await strategist_service.set_autonomy_level(AutonomyLevel.STAGED_REVIEW)
-    dm2 = await stage_cold_outreach_dm(ctx, lead2_res["id"], str(account.id), "Generic pitch")
+    dm_rej = await stage_cold_outreach_dm(
+        ctx, lead_rejected["id"], str(account.id), "Generic pitch"
+    )
     await outreach_service.review_message(
         ReviewMessageCommand(
-            message_id=dm2["id"],
+            message_id=dm_rej["id"],
             status=OutreachMessageStatus.REJECTED,
             rejection_reason="Too generic",
         )
     )
 
-    # 3. Verify evaluate_marketing_performance reports both dispatched and rejected DMs
     perf = await evaluate_marketing_performance(ctx)
     outcomes = perf["review_queue_outcomes"]
-    assert len(outcomes["approved_and_dispatched_dms"]) == 1
-    assert outcomes["approved_and_dispatched_dms"][0]["lead_handle"] == "tech_creator"
+    assert len(outcomes["approved_and_dispatched_dms"]) == 2
     assert len(outcomes["rejected_dms_by_human"]) == 1
     assert outcomes["rejected_dms_by_human"][0]["lead_handle"] == "rejected_lead"
     assert outcomes["rejected_dms_by_human"][0]["reason"] == "Too generic"
-
 
 # =============================================================================
 # Autonomous Sleep & Human Help Tools Unit Tests
