@@ -531,6 +531,16 @@ export const api = {
         body: JSON.stringify({ autonomy_level: autonomyLevel }),
       }),
 
+    clearContext: () =>
+      request<StrategistState>("/api/v1/strategist/clear-context", {
+        method: "POST",
+      }),
+
+    deleteCycle: (messageId: string) =>
+      request<StrategistState>(`/api/v1/strategist/cycles/${messageId}`, {
+        method: "DELETE",
+      }),
+
     reply: (replyText: string) =>
       request<StrategistState>("/api/v1/strategist/reply", {
         method: "POST",
