@@ -59,27 +59,21 @@ function formatSize(bytes: number): string {
 // Internal default model options (non-exported to preserve Fast Refresh)
 const DEFAULT_MODELS: ModelOption[] = [
   {
-    id: 'deepseek/deepseek-v4-flash-0731',
-    name: 'DeepSeek V4 Flash',
-    description: 'Fast autonomous tool execution & copywriting',
+    id: 'accounts/fireworks/models/deepseek-v4p1-flash-1017',
+    name: 'DeepSeek V4.1 Flash 1017',
+    description: '552B MoE Flagship ($0.30 / $1.20 per 1M) — 1M context',
     badge: 'DEFAULT',
   },
   {
-    id: 'deepseek/deepseek-r1',
-    name: 'DeepSeek R1',
-    description: 'Deep chain-of-thought reasoning & strategy',
-    badge: 'THINKING',
+    id: 'accounts/fireworks/models/glm-5p3-flash',
+    name: 'GLM 5.3 Flash',
+    description: 'Ultra-budget agent ($0.15 / $0.50 per 1M) — 1M context',
+    badge: 'BUDGET',
   },
   {
-    id: 'anthropic/claude-3.5-sonnet',
-    name: 'Claude 3.5 Sonnet',
-    description: 'High-nuance brand strategy & long-form threads',
-    badge: 'PRO',
-  },
-  {
-    id: 'openai/gpt-4o',
-    name: 'GPT-4o',
-    description: 'Multi-channel campaign reasoning',
+    id: 'accounts/fireworks/models/minimax-m3p1-flash',
+    name: 'MiniMax M3.1 Flash',
+    description: 'High-speed copywriting ($0.15 / $0.60 per 1M) — 1M context',
   },
 ];
 

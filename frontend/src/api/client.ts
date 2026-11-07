@@ -1,3 +1,35 @@
+import type { ChatSession } from '../api/client';
+import type { ConversationEntry } from '../components/ConversationList';
+
+export function groupSessionsByDate(
+  sessions: ChatSession[],
+  pinnedIds: Set<string> = new Set()
+): ConversationEntry[] {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yesterday = today - 86400000;
+  const sevenDaysAgo = today - 7 * 86400000;
+
+  return sessions.map((sess) => {
+    const isPinned = pinnedIds.has(sess.id) || Boolean(sess.extra_metadata?.pinned);
+    if (isPinned) {
+      return { id: sess.id, title: sess.title, group: 'Pinned', pinned: true };
+    }
+
+    const sessTime = new Date(sess.updated_at || sess.created_at).getTime();
+    let group = 'Older';
+    if (sessTime >= today) {
+      group = 'Today';
+    } else if (sessTime >= yesterday) {
+      group = 'Yesterday';
+    } else if (sessTime >= sevenDaysAgo) {
+      group = 'Previous 7 Days';
+    }
+
+    return { id: sess.id, title: sess.title, group, pinned: false };
+  });
+}
+
 // ============================================================================
 // 1. Domain Types & Enums (Directly Mirroring Backend Pydantic Schemas)
 // ============================================================================
@@ -49,6 +81,14 @@ export type ConnectorStatus =
   "connected" | "needs_reauth" | "rate_limited" | "error" | "disabled";
 
 // ----------------- Domain Entities -----------------
+
+export interface UsageState {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens?: number;
+  contextWindow: number;
+  estimatedCostUsd?: number;
+}
 
 export interface ActionRecipe {
   id: string;
@@ -433,12 +473,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers,
   });
 
-  // Handle 204 No Content
   if (response.status === 204) {
     return undefined as unknown as T;
   }
 
-  // Parse JSON or fallback to text
   let data: any = null;
   const contentType = response.headers.get("content-type");
   if (contentType && contentType.includes("application/json")) {
@@ -467,11 +505,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 // ============================================================================
 
 export const api = {
-  // System Health
   health: () => request<{ status: string; app: string }>("/health"),
 
   // --------------------------------------------------------------------------
-  // Accounts & Credential Vault
+  // Accounts
   // --------------------------------------------------------------------------
   accounts: {
     list: (activeOnly = false) =>
@@ -526,7 +563,7 @@ export const api = {
   },
 
   // --------------------------------------------------------------------------
-  // Campaigns & Scheduled Posts
+  // Campaigns & Posts
   // --------------------------------------------------------------------------
   campaigns: {
     list: (status?: CampaignStatus) =>
@@ -624,7 +661,7 @@ export const api = {
   },
 
   // --------------------------------------------------------------------------
-  // Competitor Triggers & Social Listening
+  // Triggers Radar
   // --------------------------------------------------------------------------
   triggers: {
     listHandles: (activeOnly = false) =>
@@ -745,7 +782,7 @@ export const api = {
   },
 
   // --------------------------------------------------------------------------
-  // Outreach CRM & Cold DM Gates
+  // Outreach CRM
   // --------------------------------------------------------------------------
   outreach: {
     listLeads: (params?: {
@@ -916,7 +953,7 @@ export const api = {
   },
 
   // --------------------------------------------------------------------------
-  // Activity Audit Trail
+  // Audit Trail History
   // --------------------------------------------------------------------------
   history: {
     list: (params?: {
@@ -1043,6 +1080,7 @@ export const api = {
       signal?: AbortSignal,
       modelOverride?: string,
       thinking?: boolean,
+      onUsage?: (usage: UsageState) => void,
     ): Promise<void> => {
       const response = await fetch(
         `/api/v1/copilot/sessions/${sessionId}/stream`,
@@ -1095,7 +1133,6 @@ export const api = {
 
           buffer += decoder.decode(value, { stream: true });
 
-          // Split along SSE event boundary (\n\n)
           const events = buffer.split("\n\n");
           buffer = events.pop() || "";
 
@@ -1108,17 +1145,14 @@ export const api = {
               if (line.startsWith("data: ")) {
                 const rawPayload = line.slice(6).trim();
 
-                // Termination sentinel
                 if (rawPayload === "[DONE]") {
                   return;
                 }
 
-                // Error sentinel
                 if (rawPayload.startsWith("[ERROR]: ")) {
                   throw new ApiError(rawPayload.slice(9), 500, "STREAM_ERROR");
                 }
 
-                // Parse JSON escaped payload
                 try {
                   const decoded = JSON.parse(rawPayload);
 
@@ -1130,6 +1164,14 @@ export const api = {
                     if (onTools && Array.isArray(decoded.tools)) {
                       onTools(decoded.tools);
                     }
+                  } else if (
+                    decoded &&
+                    typeof decoded === "object" &&
+                    decoded.__event__ === "usage"
+                  ) {
+                    if (onUsage && decoded.usage) {
+                      onUsage(decoded.usage as UsageState);
+                    }
                   } else if (typeof decoded === "string") {
                     if (decoded.startsWith("[ERROR]: ")) {
                       throw new ApiError(decoded.slice(9), 500, "STREAM_ERROR");
@@ -1137,7 +1179,6 @@ export const api = {
                     onToken(decoded);
                   }
                 } catch {
-                  // Fallback for unescaped tokens
                   onToken(rawPayload);
                 }
               }
@@ -1151,12 +1192,9 @@ export const api = {
   },
 
   // --------------------------------------------------------------------------
-  // Action Recipes & Workflow Studio
+  // Recipes
   // --------------------------------------------------------------------------
   recipes: {
-    syncDisk: () =>
-      request<ActionRecipe[]>("/api/v1/recipes/sync-disk", { method: "POST" }),
-
     list: (params?: { platform?: PlatformType; active_only?: boolean }) =>
       request<ActionRecipe[]>(`/api/v1/recipes/${buildQueryString(params)}`),
 
@@ -1165,7 +1203,7 @@ export const api = {
 
     getDefault: (platform: PlatformType) =>
       request<ActionRecipe | null>(
-        `/api/v1/recipes/default${buildQueryString({ platform, category })}`,
+        `/api/v1/recipes/default${buildQueryString({ platform })}`,
       ),
 
     create: (payload: {
@@ -1203,7 +1241,7 @@ export const api = {
   },
 
   // --------------------------------------------------------------------------
-  // External Data Connectors (GSC, Ahrefs, DataForSEO)
+  // Data Connectors
   // --------------------------------------------------------------------------
   connectors: {
     list: (params?: {
@@ -1275,7 +1313,7 @@ export const api = {
   },
 
   // --------------------------------------------------------------------------
-  // Brand Kit & Product Ground Truth
+  // Brand Kit
   // --------------------------------------------------------------------------
   brand: {
     getPrimary: () => request<BrandKit>("/api/v1/brand/primary"),
@@ -1294,7 +1332,7 @@ export const api = {
   },
 
   // --------------------------------------------------------------------------
-  // System Diagnostics & Admin Controls
+  // System Diagnostics
   // --------------------------------------------------------------------------
   system: {
     getDiagnostics: () =>

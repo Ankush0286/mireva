@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Check, X, ShieldAlert, Sparkles, Send, Clock, Loader2 } from 'lucide-react';
+import { Check, X, Sparkles, Send, Clock, Loader2 } from 'lucide-react';
 
 const KEYFRAMES = `
 @keyframes gc-pop { 0% { opacity: 0; transform: scale(0.88) } 100% { opacity: 1; transform: scale(1) } }

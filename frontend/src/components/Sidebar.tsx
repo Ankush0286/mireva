@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Home,
   Users2,
@@ -11,7 +11,6 @@ import {
   Sliders,
   Cpu,
   Plus,
-  MessageSquare,
   ChevronDown,
   RefreshCw,
   PanelLeftClose,
@@ -19,6 +18,7 @@ import {
 } from 'lucide-react';
 import { api, type ChatSession, type Account } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
+import { ConversationList, groupSessionsByDate } from './ConversationList';
 
 export type SidebarTab =
   | 'overview'
@@ -75,6 +75,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
     queryKey: queryKeys.accounts.list(false),
     queryFn: () => api.accounts.list(false),
   });
+
+  // 2. Delete Session Mutation
+  const deleteSessionMutation = useMutation({
+    mutationFn: (sessionId: string) => api.copilot.deleteSession(sessionId),
+    onSuccess: (_, deletedId) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.copilot.sessions });
+      if (selectedSessionId === deletedId) {
+        onNewChat?.();
+      }
+    },
+    onError: (err: any) => {
+      console.error('Failed to delete chat session:', err);
+    },
+  });
+
+  const handleDeleteSession = (sessionId: string) => {
+    if (window.confirm('Delete this conversation? This will permanently remove its message history.')) {
+      deleteSessionMutation.mutate(sessionId);
+    }
+  };
 
   const isRefreshing = isFetchingSessions || isFetchingAccounts;
   const primaryAccount = accounts.length > 0 ? accounts[0] : null;
@@ -246,49 +266,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="mx-4 my-1 border-b border-[#F0F5FA] shrink-0" />
 
-        {/* 2. RECENT CHATS SECTION */}
+        {/* 2. RECENT CHATS SECTION WITH DELETE SUPPORT */}
         <div
-          className={`flex-1 overflow-y-auto px-3 pt-1 pb-2 custom-scrollbar transition-opacity duration-200 ${
+          className={`flex-1 overflow-y-auto px-2 pt-1 pb-2 custom-scrollbar transition-opacity duration-200 ${
             isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'
           }`}
         >
-          <div className="flex items-center justify-between px-2 mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
-            <span>Recent Chats ({sessions.length})</span>
-            <button
-              type="button"
-              onClick={onNewChat}
-              title="Start New Chat"
-              className="hover:text-[#09122A] text-slate-500 cursor-pointer"
-            >
-              <Plus size={12} />
-            </button>
-          </div>
-
           {sessions.length === 0 ? (
-            <div className="px-2 py-2 text-[11px] text-slate-400 rounded-lg bg-slate-50/50 whitespace-nowrap">
+            <div className="px-3 py-2 text-[11px] text-slate-400 rounded-lg bg-slate-50/50 whitespace-nowrap">
               No chats yet.
             </div>
           ) : (
-            <div className="space-y-0.5">
-              {sessions.map((sess) => {
-                const isSelected = activeTab === null && selectedSessionId === sess.id;
-                return (
-                  <button
-                    key={sess.id}
-                    type="button"
-                    onClick={() => onSelectSession && onSelectSession(sess.id)}
-                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left text-[11.5px] transition-all cursor-pointer truncate whitespace-nowrap ${
-                      isSelected
-                        ? 'bg-[#EBF3FC] text-[#0E3A75] font-semibold'
-                        : 'text-slate-600 hover:bg-slate-50 hover:text-[#09122A]'
-                    }`}
-                  >
-                    <MessageSquare size={11} className="text-slate-400 shrink-0" />
-                    <span className="truncate">{sess.title}</span>
-                  </button>
-                );
-              })}
-            </div>
+            <ConversationList
+              variant="Compact"
+              className="border-none bg-transparent p-0 shadow-none max-w-none"
+              conversations={groupSessionsByDate(sessions)}
+              activeId={selectedSessionId || undefined}
+              onSelect={(id) => onSelectSession && onSelectSession(id)}
+              onDelete={handleDeleteSession}
+            />
           )}
         </div>
       </div>

@@ -1,10 +1,4 @@
-import React, {
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-  useMemo,
-} from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -21,6 +15,7 @@ import {
   type ChatMessage,
   type ToolExecutionLog,
   type ChatSession,
+  type UsageState,
 } from "../../api/client";
 import { queryKeys } from "../../api/queryKeys";
 import { AgentSteps } from "../../components/AgentSteps";
@@ -42,6 +37,7 @@ import {
   ApprovalCard,
   type ApprovalDecision,
 } from "../../components/ApprovalCard";
+import { UsageMeter } from "../../components/UsageMeter";
 
 // ============================================================================
 // Pure Module-Level Helpers
@@ -108,24 +104,33 @@ function parseModelOutput(rawContent: string): {
 }
 
 function parseToolArguments(rawArgs: unknown): Record<string, any> {
-  if (!rawArgs || typeof rawArgs !== "object") return {};
-
-  const obj = rawArgs as Record<string, any>;
-  if ("arguments" in obj && typeof obj.arguments === "string") {
+  if (!rawArgs) return {};
+  if (typeof rawArgs === "string") {
     try {
-      return JSON.parse(obj.arguments);
+      return JSON.parse(rawArgs);
     } catch {
-      return obj;
+      return {};
     }
   }
-  if ("args" in obj && typeof obj.args === "string") {
-    try {
-      return JSON.parse(obj.args);
-    } catch {
-      return obj;
+  if (typeof rawArgs === "object") {
+    const obj = rawArgs as Record<string, any>;
+    if ("arguments" in obj && typeof obj.arguments === "string") {
+      try {
+        return JSON.parse(obj.arguments);
+      } catch {
+        return obj;
+      }
     }
+    if ("args" in obj && typeof obj.args === "string") {
+      try {
+        return JSON.parse(obj.args);
+      } catch {
+        return obj;
+      }
+    }
+    return obj;
   }
-  return obj;
+  return {};
 }
 
 function parseToolResult(output: unknown): Record<string, any> | null {
@@ -237,15 +242,21 @@ export const ChatPage: React.FC<ChatPageProps> = ({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const [decisions, setDecisions] = useState<Record<string, ApprovalDecision>>(
-    {},
-  );
+  const [decisions, setDecisions] = useState<Record<string, ApprovalDecision>>({});
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const isStreamingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const initialPromptHandled = useRef(false);
+
+  // Fetch session metadata to render active title in top sticky header
+  const { data: sessionData } = useQuery<ChatSession>({
+    queryKey: ["copilot", "session", sessionId],
+    queryFn: () => (sessionId ? api.copilot.getSession(sessionId) : Promise.reject()),
+    enabled: Boolean(sessionId),
+    staleTime: 1000 * 60 * 5,
+  });
 
   const { data: models = [] } = useQuery<ModelOption[]>({
     queryKey: ["copilot", "models"],
@@ -415,6 +426,23 @@ export const ChatPage: React.FC<ChatPageProps> = ({
           abortController.signal,
           modelId,
           thinking,
+          (liveUsage: UsageState) => {
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastIndex = updated.length - 1;
+              if (lastIndex >= 0 && updated[lastIndex].role === "assistant") {
+                updated[lastIndex] = {
+                  ...updated[lastIndex],
+                  token_count: liveUsage.totalTokens,
+                  extra_metadata: {
+                    ...(updated[lastIndex].extra_metadata || {}),
+                    usage: liveUsage,
+                  },
+                };
+              }
+              return updated;
+            });
+          }
         );
 
         queryClient.invalidateQueries({ queryKey: queryKeys.copilot.sessions });
@@ -462,7 +490,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
     actionType: string,
     title: string,
     entityId: string | undefined,
-    decision: ApprovalDecision,
+    decision: ApprovalDecision
   ) => {
     setActiveActionId(toolId);
     setDecisions((prev) => ({ ...prev, [toolId]: decision }));
@@ -500,6 +528,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
     }
   };
 
+  // Find the latest pending approval tool call across messages
   const latestPendingApproval = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
@@ -517,11 +546,44 @@ export const ChatPage: React.FC<ChatPageProps> = ({
     return null;
   }, [messages, decisions]);
 
+  // Aggregate global session usage (latest cumulative snapshot emitted by backend)
+  const latestUsage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const usage = messages[i].extra_metadata?.usage as UsageState | undefined;
+      if (usage && usage.contextWindow) {
+        return usage;
+      }
+    }
+    return null;
+  }, [messages]);
+
+  const sessionTitle =
+    sessionData?.title ||
+    (messages.length > 0 && messages[0].role === "user"
+      ? messages[0].content.slice(0, 36)
+      : "Active Conversation");
+
   return (
     <div className="relative h-full flex flex-col justify-between max-w-4xl mx-auto w-full font-sans select-none text-[#09122A] overflow-hidden">
-      {/* 1. Main Conversation Stream */}
+      {/* ⭐ 0. PERSISTENT GLOBAL TELEMETRY HEADER (Sticky outside scroll area) ⭐ */}
+      {messages.length > 0 && (
+        <div className="w-full flex items-center justify-between pt-1 pb-2.5 px-3 sm:px-0 shrink-0 z-20 border-b border-[#E2ECF7]/50 mb-1 animate-fade-up-1">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+            <span className="text-xs font-bold text-[#09122A] truncate">
+              {sessionTitle}
+            </span>
+          </div>
+
+          {latestUsage && (
+            <UsageMeter usage={latestUsage} variant="Inline" />
+          )}
+        </div>
+      )}
+
+      {/* 1. Main Conversation Stream (Scrollable) */}
       <div
-        className={`flex-1 overflow-y-auto px-3 sm:px-6 py-4 scrollbar-none flex flex-col ${
+        className={`flex-1 overflow-y-auto px-3 sm:px-6 py-3 scrollbar-none flex flex-col ${
           messages.length === 0 ? "justify-center" : "justify-start"
         }`}
       >
@@ -746,7 +808,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
 
                       {(!isLastAssistant || !isStreaming) && (
                         <div className="flex items-center justify-between mt-3.5 pt-2.5 border-t border-[#F0F5FA] text-slate-400">
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1.5">
                             <button
                               type="button"
                               onClick={() => handleCopy(msg.id, cleanAnswer)}
@@ -787,6 +849,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
                             )}
                           </div>
 
+                          {/* Clean Timestamp without redundant usage clutter */}
                           <span className="font-mono text-[10px] text-slate-300">
                             {new Date(msg.created_at).toLocaleTimeString([], {
                               hour: "2-digit",
@@ -806,68 +869,59 @@ export const ChatPage: React.FC<ChatPageProps> = ({
         )}
       </div>
 
-      {/* 2. Sticky Approval Card (Tucked behind the chatbox with zero gap) */}
-      {latestPendingApproval &&
-        (() => {
-          const tool = latestPendingApproval;
-          const args = parseToolArguments(tool.input_arguments);
-          const result = parseToolResult(tool.output_result) || {};
+      {/* 2. Sticky Approval Card (Tucked Behind Chatbox with Zero Gap) */}
+      {latestPendingApproval && (() => {
+        const tool = latestPendingApproval;
+        const args = parseToolArguments(tool.input_arguments);
+        const result = parseToolResult(tool.output_result) || {};
 
-          const actionType =
-            result.action_type || args.action_type || "general";
-          const title =
-            result.title || args.title || "Action Approval Required";
-          const entityId =
-            result.entity_id ||
-            result.id ||
-            args.entity_id ||
-            args.message_id ||
-            args.post_id;
-          const badgeLabel =
-            result.badge_label || args.badge_label || "Review Gate";
+        const actionType = result.action_type || args.action_type || "general";
+        const title = result.title || args.title || "Action Approval Required";
+        const entityId = result.entity_id || result.id || args.entity_id || args.message_id || args.post_id;
+        const badgeLabel = result.badge_label || args.badge_label || "Review Gate";
 
-          const badgeType =
-            actionType === "outreach_dm"
-              ? "outreach"
-              : actionType === "trigger_reply"
-                ? "trigger"
-                : actionType === "publish_post"
-                  ? "campaign"
-                  : "default";
+        const badgeType =
+          actionType === "outreach_dm"
+            ? "outreach"
+            : actionType === "trigger_reply"
+              ? "trigger"
+              : actionType === "publish_post"
+                ? "campaign"
+                : "default";
 
-          const currentDecision = decisions[tool.id] ?? null;
+        const currentDecision = decisions[tool.id] ?? null;
 
-          return (
-            <div className="w-full max-w-3xl mx-auto px-3 sm:px-0 relative z-10 pb-2 animate-fade-up-1 shrink-0">
-              <ApprovalCard
-                badge={badgeLabel}
-                badgeType={badgeType}
-                title={title}
-                meta={`Agent Tool: ${tool.tool_name}${entityId ? ` · ID: ${entityId}` : ""}`}
-                approveLabel={
-                  actionType === "outreach_dm"
-                    ? "Approve & Dispatch"
-                    : "Approve Action"
-                }
-                rejectLabel="Dismiss"
-                decision={currentDecision}
-                isLoading={activeActionId === tool.id}
-                onDecide={(decision) =>
-                  handleApprovalDecision(
-                    tool.id,
-                    actionType,
-                    title,
-                    entityId,
-                    decision,
-                  )
-                }
-              />
-            </div>
-          );
-        })()}
+        return (
+          <div className="w-full max-w-3xl mx-auto px-3 sm:px-0 relative z-10 shrink-0">
+            <ApprovalCard
+              badge={badgeLabel}
+              badgeType={badgeType}
+              title={title}
+              meta={`Agent Tool: ${tool.tool_name}${entityId ? ` · ID: ${entityId}` : ""}`}
+              approveLabel={actionType === "outreach_dm" ? "Approve & Dispatch" : "Approve Action"}
+              rejectLabel="Dismiss"
+              decision={currentDecision}
+              isLoading={activeActionId === tool.id}
+              onDecide={(decision) =>
+                handleApprovalDecision(
+                  tool.id,
+                  actionType,
+                  title,
+                  entityId,
+                  decision
+                )
+              }
+            />
+          </div>
+        );
+      })()}
 
-      {/* 3. Docked Bottom Prompt Composer (Sits on top with -mt-6 so the approval card is tucked behind) */}
-      <div className="w-full max-w-3xl mx-auto pb-2 pt-1 px-3 sm:px-0 shrink-0 relative z-20 -mt-6">
+      {/* 3. Docked Bottom Prompt Composer (Overlaps the bottom of the card with -mt-6 so card is tucked behind) */}
+      <div
+        className={`w-full max-w-3xl mx-auto pb-2 pt-1 px-3 sm:px-0 shrink-0 relative z-20 ${
+          latestPendingApproval ? "-mt-6" : ""
+        }`}
+      >
         <PromptComposer
           models={models.length > 0 ? models : undefined}
           isGenerating={isStreaming}
