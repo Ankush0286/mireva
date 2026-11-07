@@ -61,7 +61,12 @@ export const queryKeys = {
     messages: (sessionId: string) => ['copilot', sessionId, 'messages'] as const,
     tools: (sessionId: string) => ['copilot', sessionId, 'tools'] as const,
   },
+  strategist: {
+    all: ['strategist'] as const,
+    state: ['strategist', 'state'] as const,
+  },
   system: {
+    all: ['system'] as const,
     diagnostics: ['system', 'diagnostics'] as const,
   },
 };

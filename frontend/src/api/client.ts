@@ -1,40 +1,3 @@
-import type { ChatSession } from "../api/client";
-import type { ConversationEntry } from "../components/ConversationList";
-
-export function groupSessionsByDate(
-  sessions: ChatSession[],
-  pinnedIds: Set<string> = new Set(),
-): ConversationEntry[] {
-  const now = new Date();
-  const today = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  ).getTime();
-  const yesterday = today - 86400000;
-  const sevenDaysAgo = today - 7 * 86400000;
-
-  return sessions.map((sess) => {
-    const isPinned =
-      pinnedIds.has(sess.id) || Boolean(sess.extra_metadata?.pinned);
-    if (isPinned) {
-      return { id: sess.id, title: sess.title, group: "Pinned", pinned: true };
-    }
-
-    const sessTime = new Date(sess.updated_at || sess.created_at).getTime();
-    let group = "Older";
-    if (sessTime >= today) {
-      group = "Today";
-    } else if (sessTime >= yesterday) {
-      group = "Yesterday";
-    } else if (sessTime >= sevenDaysAgo) {
-      group = "Previous 7 Days";
-    }
-
-    return { id: sess.id, title: sess.title, group, pinned: false };
-  });
-}
-
 // ============================================================================
 // 1. Domain Types & Enums (Directly Mirroring Backend Pydantic Schemas)
 // ============================================================================
@@ -85,6 +48,11 @@ export type ConnectorType =
 export type ConnectorStatus =
   "connected" | "needs_reauth" | "rate_limited" | "error" | "disabled";
 
+export type StrategistStatus =
+  "idle" | "running" | "sleeping" | "waiting_for_human" | "paused";
+
+export type AutonomyLevel = "staged_review" | "full_auto";
+
 // ----------------- Domain Entities -----------------
 
 export interface UsageState {
@@ -93,6 +61,26 @@ export interface UsageState {
   totalTokens?: number;
   contextWindow: number;
   estimatedCostUsd?: number;
+}
+
+export interface StrategistState {
+  id: string;
+  status: StrategistStatus;
+  current_step: string | null;
+  model_id: string | null;
+  next_cycle_at: string | null;
+  sleep_rationale: string | null;
+  pending_question: string | null;
+  pending_urgency: string | null;
+  pending_context: Record<string, unknown>;
+  autonomy_level: AutonomyLevel;
+  session_id: string | null;
+  cycle_count: number;
+  last_cycle_started_at: string | null;
+  last_cycle_completed_at: string | null;
+  extra_metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ActionRecipe {
@@ -323,6 +311,9 @@ export interface CopilotModelInfo {
   name: string;
   description?: string | null;
   badge?: string | null;
+  context_window?: number;
+  input_cost_per_1m?: number;
+  output_cost_per_1m?: number;
 }
 
 export interface DataConnector {
@@ -511,6 +502,41 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<{ status: string; app: string }>("/health"),
+
+  // --------------------------------------------------------------------------
+  // 24/7 Autonomous Strategist (Mission Control)
+  // --------------------------------------------------------------------------
+  strategist: {
+    getState: () => request<StrategistState>("/api/v1/strategist/state"),
+
+    setModel: (modelId: string) =>
+      request<StrategistState>("/api/v1/strategist/model", {
+        method: "POST",
+        body: JSON.stringify({ model_id: modelId }),
+      }),
+
+    runNow: () =>
+      request<StrategistState>("/api/v1/strategist/run-now", {
+        method: "POST",
+      }),
+
+    togglePause: () =>
+      request<StrategistState>("/api/v1/strategist/toggle-pause", {
+        method: "POST",
+      }),
+
+    setAutonomy: (autonomyLevel: AutonomyLevel) =>
+      request<StrategistState>("/api/v1/strategist/autonomy", {
+        method: "POST",
+        body: JSON.stringify({ autonomy_level: autonomyLevel }),
+      }),
+
+    reply: (replyText: string) =>
+      request<StrategistState>("/api/v1/strategist/reply", {
+        method: "POST",
+        body: JSON.stringify({ reply: replyText }),
+      }),
+  },
 
   // --------------------------------------------------------------------------
   // Accounts

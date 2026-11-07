@@ -1,7 +1,9 @@
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from pydantic_ai import RunContext
+from sqlalchemy import select
 
 from app.agent.browser_agent import (
     read_and_summarize_inbox,
@@ -9,6 +11,7 @@ from app.agent.browser_agent import (
 )
 from app.agent.llm import AgentDeps, marketing_agent
 from app.common.enums import (
+    AutonomyLevel,
     LeadStage,
     LeadTier,
     OutreachChannel,
@@ -26,6 +29,7 @@ from app.modules.outreach.commands import (
 )
 from app.modules.outreach.exceptions import LeadAlreadyExistsError
 from app.modules.outreach.service import OutreachService
+from app.modules.strategist.models import StrategistState
 from app.platforms.registry import PlatformRegistry
 
 
@@ -158,6 +162,14 @@ async def stage_cold_outreach_dm(
     try:
         async with ctx.deps.db_session_scope() as db:
             service = OutreachService(db)
+            acc_service = AccountService(db)
+            account = await acc_service.get_by_id_or_raise(UUID(account_id))
+
+            # Check if Full Auto policy is active
+            res = await db.execute(select(StrategistState).order_by(StrategistState.created_at.desc()).limit(1))
+            state = res.scalars().first()
+            is_full_auto = state is not None and state.autonomy_level == AutonomyLevel.FULL_AUTO
+
             cmd = StageMessageCommand(
                 lead_id=UUID(lead_id),
                 account_id=UUID(account_id),
@@ -165,15 +177,23 @@ async def stage_cold_outreach_dm(
                 channel=OutreachChannel.DM,
             )
             msg = await service.stage_message(cmd)
+
+            # In Full Auto mode, auto-approve immediately if account quotas allow
+            if is_full_auto and account.can_send_dm_today():
+                msg.status = OutreachMessageStatus.APPROVED
+                msg.reviewed_at = datetime.now(UTC)
+                await db.commit()
+                await db.refresh(msg)
+
             return {
                 "id": str(msg.id),
                 "lead_id": str(msg.lead_id),
                 "status": msg.status.value,
                 "content_preview": msg.content[:80],
+                "auto_approved": is_full_auto,
             }
     except (AppError, ValueError) as exc:
         return {"error": str(exc)}
-
 
 @marketing_agent.tool
 async def review_staged_dm(

@@ -21,8 +21,7 @@ from app.modules.copilot.models import ChatSession
 class StrategistState(AuditBase):
     """
     Singleton persistence entity tracking the 24/7 background agent's state,
-    scheduled sleep timers, human-approval blocks, and autonomy policies.
-    Survives server restarts and redeployments via PostgreSQL persistence.
+    active model, scheduled sleep timers, and autonomy policies.
     """
 
     __tablename__ = "strategist_state"
@@ -34,6 +33,9 @@ class StrategistState(AuditBase):
         index=True,
     )
     current_step: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Active LLM Model Identifier (e.g. nvidia/nemotron-3-ultra-550b-a55b:free)
+    model_id: Mapped[str | None] = mapped_column(String(150), nullable=True)
 
     # Sleep & Scheduling
     next_cycle_at: Mapped[datetime | None] = mapped_column(
@@ -85,7 +87,6 @@ class StrategistState(AuditBase):
     session: Mapped[ChatSession | None] = relationship("ChatSession")
 
     def is_due_to_wake(self) -> bool:
-        """Checks if the sleep timer has elapsed (safe for both Postgres and SQLite)."""
         if self.status != StrategistStatus.SLEEPING or not self.next_cycle_at:
             return False
         wake_at = (

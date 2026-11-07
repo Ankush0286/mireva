@@ -13,6 +13,7 @@ class StrategistStateResponse(BaseModel):
     id: UUID
     status: StrategistStatus
     current_step: str | None = None
+    model_id: str | None = None
     next_cycle_at: datetime | None = None
     sleep_rationale: str | None = None
     pending_question: str | None = None
@@ -31,12 +32,14 @@ class StrategistStateResponse(BaseModel):
 
 
 class UpdateAutonomyRequest(BaseModel):
-    """Payload accepted by POST /api/v1/strategist/autonomy"""
-
     autonomy_level: AutonomyLevel
 
 
-class HumanReplyRequest(BaseModel):
-    """Payload accepted by POST /api/v1/strategist/reply"""
+class UpdateModelRequest(BaseModel):
+    """Payload accepted by POST /api/v1/strategist/model"""
 
+    model_id: str = Field(..., min_length=1, max_length=150)
+
+
+class HumanReplyRequest(BaseModel):
     reply: str = Field(..., min_length=1, max_length=10000)

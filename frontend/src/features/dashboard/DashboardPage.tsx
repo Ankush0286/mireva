@@ -1,28 +1,30 @@
-import React, { useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Sidebar, type SidebarTab } from '../../components/Sidebar';
-import { OverviewPage } from '../overview/OverviewPage';
-import { ChatPage } from '../chat/ChatPage';
-import { AccountsPage } from '../accounts/AccountsPage';
-import { ConnectorsPage } from '../connectors/ConnectorsPage';
-import { CampaignsPage } from '../campaigns/CampaignsPage';
-import { TriggersPage } from '../triggers/TriggersPage';
-import { OutreachPage } from '../outreach/OutreachPage';
-import { BrandKitPage } from '../brand/BrandKitPage';
-import { ActionStudioPage } from '../studio/ActionStudioPage';
-import { SystemHealthPage } from '../system/SystemHealthPage';
-import { type ChatSession } from '../../api/client';
+import React, { useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Sidebar, type SidebarTab } from "../../components/Sidebar";
+import { OverviewPage } from "../overview/OverviewPage";
+import { MissionControlPage } from "../mission_control/MissionControlPage";
+import { ChatPage } from "../chat/ChatPage";
+import { AccountsPage } from "../accounts/AccountsPage";
+import { ConnectorsPage } from "../connectors/ConnectorsPage";
+import { CampaignsPage } from "../campaigns/CampaignsPage";
+import { TriggersPage } from "../triggers/TriggersPage";
+import { OutreachPage } from "../outreach/OutreachPage";
+import { BrandKitPage } from "../brand/BrandKitPage";
+import { ActionStudioPage } from "../studio/ActionStudioPage";
+import { SystemHealthPage } from "../system/SystemHealthPage";
+import { type ChatSession } from "../../api/client";
 
 const VALID_SIDEBAR_TABS: SidebarTab[] = [
-  'overview',
-  'accounts',
-  'connectors',
-  'campaigns',
-  'triggers',
-  'outreach',
-  'brand',
-  'studio',
-  'system',
+  "overview",
+  "mission",
+  "accounts",
+  "connectors",
+  "campaigns",
+  "triggers",
+  "outreach",
+  "brand",
+  "studio",
+  "system",
 ];
 
 export const DashboardPage: React.FC = () => {
@@ -30,14 +32,13 @@ export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { sessionId } = useParams<{ sessionId?: string }>();
 
-  // Determine active tab directly from URL!
-  const currentPath = location.pathname.replace(/^\//, '').split('/')[0];
-  const isChatRoute = location.pathname.startsWith('/chat');
+  const currentPath = location.pathname.replace(/^\//, "").split("/")[0];
+  const isChatRoute = location.pathname.startsWith("/chat");
   const activeTab: SidebarTab | null = isChatRoute
     ? null
     : VALID_SIDEBAR_TABS.includes(currentPath as SidebarTab)
-    ? (currentPath as SidebarTab)
-    : 'overview';
+      ? (currentPath as SidebarTab)
+      : "overview";
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -47,7 +48,7 @@ export const DashboardPage: React.FC = () => {
   };
 
   const handleNewChat = () => {
-    navigate('/chat');
+    navigate("/chat");
   };
 
   const handleSelectSession = (id: string) => {
@@ -70,23 +71,25 @@ export const DashboardPage: React.FC = () => {
     }
 
     switch (activeTab) {
-      case 'accounts':
+      case "mission":
+        return <MissionControlPage />;
+      case "accounts":
         return <AccountsPage />;
-      case 'connectors':
+      case "connectors":
         return <ConnectorsPage />;
-      case 'campaigns':
+      case "campaigns":
         return <CampaignsPage />;
-      case 'triggers':
+      case "triggers":
         return <TriggersPage />;
-      case 'outreach':
+      case "outreach":
         return <OutreachPage />;
-      case 'brand':
+      case "brand":
         return <BrandKitPage />;
-      case 'studio':
+      case "studio":
         return <ActionStudioPage />;
-      case 'system':
+      case "system":
         return <SystemHealthPage />;
-      case 'overview':
+      case "overview":
       default:
         return (
           <OverviewPage
@@ -114,7 +117,7 @@ export const DashboardPage: React.FC = () => {
       {/* 2. Main Workspace */}
       <main
         className={`relative flex-1 h-screen overflow-hidden px-8 py-5 transition-[margin] duration-300 ease-[cubic-bezier(0.2,0,0,1)] flex flex-col justify-between ${
-          isSidebarCollapsed ? 'ml-16' : 'ml-60'
+          isSidebarCollapsed ? "ml-16" : "ml-60"
         }`}
       >
         {/* Dither Sky Background Asset */}
@@ -122,7 +125,7 @@ export const DashboardPage: React.FC = () => {
           src="/chat-bg.png"
           alt="Dither Sky Background"
           className="absolute inset-0 w-full h-full object-cover object-top pointer-events-none select-none opacity-100"
-          style={{ imageRendering: 'pixelated' }}
+          style={{ imageRendering: "pixelated" }}
         />
 
         {/* Dynamic View */}

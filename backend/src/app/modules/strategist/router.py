@@ -2,13 +2,18 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.loop import run_agent_turn
-from app.automation.workers.strategist_worker import execute_autonomous_cycle
+from app.automation.workers.strategist_worker import (
+    cancel_active_cycle,
+    execute_autonomous_cycle,
+)
+from app.common.enums import StrategistStatus
 from app.core.agent_config import agent_settings
 from app.db.dependencies import get_db_session
 from app.modules.strategist.schemas import (
     HumanReplyRequest,
     StrategistStateResponse,
     UpdateAutonomyRequest,
+    UpdateModelRequest,
 )
 from app.modules.strategist.service import StrategistService
 
@@ -58,6 +63,8 @@ async def toggle_pause(
     service: StrategistService = Depends(get_strategist_service),
 ) -> StrategistStateResponse:
     state = await service.toggle_pause()
+    if state.status == StrategistStatus.PAUSED:
+        cancel_active_cycle()
     return StrategistStateResponse.model_validate(state)
 
 
@@ -76,6 +83,20 @@ async def update_autonomy(
 
 
 @router.post(
+    "/model",
+    response_model=StrategistStateResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Set the LLM model used by the autonomous strategist",
+)
+async def set_strategist_model(
+    payload: UpdateModelRequest,
+    service: StrategistService = Depends(get_strategist_service),
+) -> StrategistStateResponse:
+    state = await service.set_model(payload.model_id)
+    return StrategistStateResponse.model_validate(state)
+
+
+@router.post(
     "/reply",
     response_model=StrategistStateResponse,
     status_code=status.HTTP_200_OK,
@@ -89,6 +110,7 @@ async def reply_to_agent(
     state, question = await service.prepare_human_reply()
 
     if state.session_id:
+        active_model = state.model_id or agent_settings.DEFAULT_MODEL
         prompt = (
             f"Human Operator responded to your question ('{question}'):\n"
             f"{payload.reply.strip()}\n\n"
@@ -98,7 +120,7 @@ async def reply_to_agent(
             db=db,
             session_id=state.session_id,
             user_prompt=prompt,
-            model_override=agent_settings.DEFAULT_MODEL,
+            model_override=active_model,
             thinking=True,
         )
 

@@ -12,8 +12,8 @@ class ModelConfig:
     description: str
     provider: ProviderType
     context_window: int = 1_048_576
-    input_cost_per_1m: float = 0.30
-    output_cost_per_1m: float = 1.20
+    input_cost_per_1m: float = 0.0
+    output_cost_per_1m: float = 0.0
     badge: str | None = None
 
 
@@ -22,27 +22,37 @@ class AgentSettings:
     """Runtime configuration for LLM orchestration and Pydantic AI."""
 
     DEFAULT_MODEL: str = os.getenv(
-        "AGENT_MODEL", "accounts/fireworks/models/deepseek-v4p1-flash-1017"
+        "AGENT_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free"
     )
     REASONING_MODEL: str = os.getenv(
-        "AGENT_REASONING_MODEL", "accounts/fireworks/models/deepseek-v4p1-flash-1017"
+        "AGENT_REASONING_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free"
     )
 
     AVAILABLE_MODELS: tuple[ModelConfig, ...] = (
         ModelConfig(
+            id="nvidia/nemotron-3-ultra-550b-a55b:free",
+            name="Nemotron 3 Ultra (Free Sandbox)",
+            description="550B MoE (OpenRouter) — 1M context, 100% Free risk-free testing",
+            provider="openrouter",
+            context_window=1_048_576,
+            input_cost_per_1m=0.00,
+            output_cost_per_1m=0.00,
+            badge="FREE",
+        ),
+        ModelConfig(
             id="accounts/fireworks/models/deepseek-v4p1-flash-1017",
-            name="DeepSeek V4.1 Flash 1017",
-            description="552B MoE Flagship ($0.30 / $1.20 per 1M) — 1M context & native reasoning",
+            name="DeepSeek V4.1 Flash 1017 (Fireworks)",
+            description="552B MoE Flagship ($0.30 / $1.20 per 1M) — 1M context",
             provider="fireworks",
             context_window=1_048_576,
             input_cost_per_1m=0.30,
             output_cost_per_1m=1.20,
-            badge="DEFAULT",
+            badge="PAID",
         ),
         ModelConfig(
             id="accounts/fireworks/models/glm-5p3-flash",
-            name="GLM 5.3 Flash",
-            description="Ultra-budget agent ($0.15 / $0.50 per 1M) — 1M context & tool calling",
+            name="GLM 5.3 Flash (Fireworks)",
+            description="Ultra-budget agent ($0.15 / $0.50 per 1M) — 1M context",
             provider="fireworks",
             context_window=1_048_576,
             input_cost_per_1m=0.15,
@@ -51,7 +61,7 @@ class AgentSettings:
         ),
         ModelConfig(
             id="accounts/fireworks/models/minimax-m3p1-flash",
-            name="MiniMax M3.1 Flash",
+            name="MiniMax M3.1 Flash (Fireworks)",
             description="High-speed copywriting ($0.15 / $0.60 per 1M) — 1M context",
             provider="fireworks",
             context_window=1_000_000,

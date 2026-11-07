@@ -59,10 +59,16 @@ function formatSize(bytes: number): string {
 // Internal default model options (non-exported to preserve Fast Refresh)
 const DEFAULT_MODELS: ModelOption[] = [
   {
+    id: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+    name: 'Nemotron 3 Ultra (Free)',
+    description: '550B MoE (OpenRouter) — 1M context, 100% Free Sandbox',
+    badge: 'FREE',
+  },
+  {
     id: 'accounts/fireworks/models/deepseek-v4p1-flash-1017',
     name: 'DeepSeek V4.1 Flash 1017',
     description: '552B MoE Flagship ($0.30 / $1.20 per 1M) — 1M context',
-    badge: 'DEFAULT',
+    badge: 'PAID',
   },
   {
     id: 'accounts/fireworks/models/glm-5p3-flash',

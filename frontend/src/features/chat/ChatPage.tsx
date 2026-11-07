@@ -16,7 +16,6 @@ import {
   RotateCcw,
   ArrowUpRight,
   Pencil,
-  X,
 } from "lucide-react";
 import {
   api,

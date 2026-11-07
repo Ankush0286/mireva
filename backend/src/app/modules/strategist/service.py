@@ -90,7 +90,9 @@ class StrategistService:
         state.status = StrategistStatus.SLEEPING
         state.next_cycle_at = wake_time
         state.sleep_rationale = cmd.rationale.strip()
-        state.current_step = f"Resting for {clamped_minutes}m until {wake_time.strftime('%H:%M UTC')}"
+        state.current_step = (
+            f"Resting for {clamped_minutes}m until {wake_time.strftime('%H:%M UTC')}"
+        )
         state.last_cycle_completed_at = datetime.now(UTC)
 
         await self.db.commit()
@@ -154,6 +156,13 @@ class StrategistService:
         cmd = UpdateAutonomyCommand(autonomy_level=level)
         state = await self.get_or_create_state()
         state.autonomy_level = cmd.autonomy_level
+        await self.db.commit()
+        await self.db.refresh(state)
+        return state
+
+    async def set_model(self, model_id: str) -> StrategistState:
+        state = await self.get_or_create_state()
+        state.model_id = model_id.strip()
         await self.db.commit()
         await self.db.refresh(state)
         return state

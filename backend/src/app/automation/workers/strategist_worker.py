@@ -1,16 +1,20 @@
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.loop import run_agent_turn
-from app.common.enums import StrategistStatus
+from app.common.enums import AutonomyLevel, StrategistStatus
 from app.core.agent_config import agent_settings
 from app.db.session import async_session_factory
 from app.modules.strategist.models import StrategistState
 from app.modules.strategist.service import StrategistService
 
 logger = logging.getLogger(__name__)
+
+_active_cycle_task: asyncio.Task[Any] | None = None
 
 AUTONOMOUS_CYCLE_PROMPT = """
 You are waking up for your scheduled autonomous growth cycle.
@@ -33,11 +37,23 @@ Execute your 5-step growth loop:
 """.strip()
 
 
+def cancel_active_cycle() -> bool:
+    """Cancels the currently running autonomous cycle task if one is in flight."""
+    global _active_cycle_task
+    if _active_cycle_task is not None and not _active_cycle_task.done():
+        _active_cycle_task.cancel()
+        return True
+    return False
+
+
 async def execute_autonomous_cycle(
     db: AsyncSession,
     state: StrategistState | None = None,
 ) -> bool:
     """Executes a single autonomous marketing turn inside the dedicated ChatSession."""
+    global _active_cycle_task
+    _active_cycle_task = asyncio.current_task()
+
     service = StrategistService(db)
     active_state = state or await service.get_or_create_state()
 
@@ -56,15 +72,35 @@ async def execute_autonomous_cycle(
     await db.commit()
 
     try:
+        active_model = active_state.model_id or agent_settings.DEFAULT_MODEL
+
+        # Dynamic prompt based on autonomy level
+        autonomy_directive = (
+            "CURRENT AUTONOMY LEVEL: FULL AUTO. You are fully authorized to execute actions directly. "
+            "DMs and posts will be automatically dispatched within daily rate limits. Do NOT wait for human approval."
+            if active_state.autonomy_level == AutonomyLevel.FULL_AUTO
+            else "CURRENT AUTONOMY LEVEL: STAGED REVIEW. All outbound DMs, posts, and replies must be staged for human review. "
+            "Call `request_human_approval` for any outbound action so it appears in the operator's review queue."
+        )
+
+        cycle_prompt = f"{AUTONOMOUS_CYCLE_PROMPT}\n\nPOLICY NOTICE:\n{autonomy_directive}"
+
         await run_agent_turn(
             db=db,
             session_id=active_state.session_id,
-            user_prompt=AUTONOMOUS_CYCLE_PROMPT,
-            model_override=agent_settings.DEFAULT_MODEL,
+            user_prompt=cycle_prompt,
+            model_override=active_model,
             thinking=True,
         )
 
         await db.refresh(active_state)
+
+        # If operator paused the agent while the cycle was running, respect the PAUSED state
+        if active_state.status == StrategistStatus.PAUSED:
+            logger.info(
+                "⏸️ Cycle #%d finished, keeping operator PAUSED state.", active_state.cycle_count
+            )
+            return False
 
         # Fallback sleep if the agent completed its turn without calling `sleep` or `ask_human_for_help`
         if active_state.status == StrategistStatus.RUNNING:
@@ -84,16 +120,30 @@ async def execute_autonomous_cycle(
         )
         return True
 
+    except asyncio.CancelledError:
+        logger.info("⏸️ Autonomous cycle cancelled by operator pause.")
+        await db.rollback()
+        paused_state = await service.get_or_create_state()
+        paused_state.status = StrategistStatus.PAUSED
+        paused_state.next_cycle_at = None
+        paused_state.current_step = "Autonomous background execution paused by operator."
+        await db.commit()
+        return False
+
     except Exception as exc:
         logger.error("Error in autonomous strategist turn: %s", exc, exc_info=True)
         await db.rollback()
         refreshed = await service.get_or_create_state()
-        refreshed.status = StrategistStatus.SLEEPING
-        refreshed.next_cycle_at = datetime.now(UTC) + timedelta(minutes=30)
-        refreshed.sleep_rationale = f"Cycle error ({exc}). Retrying in 30 minutes."
-        refreshed.current_step = "Recovering from error; scheduled retry in 30m."
-        await db.commit()
+        if refreshed.status != StrategistStatus.PAUSED:
+            refreshed.status = StrategistStatus.SLEEPING
+            refreshed.next_cycle_at = datetime.now(UTC) + timedelta(minutes=30)
+            refreshed.sleep_rationale = f"Cycle error ({exc}). Retrying in 30 minutes."
+            refreshed.current_step = "Recovering from error; scheduled retry in 30m."
+            await db.commit()
         return False
+
+    finally:
+        _active_cycle_task = None
 
 
 async def run_strategist_heartbeat(db: AsyncSession | None = None) -> int:
