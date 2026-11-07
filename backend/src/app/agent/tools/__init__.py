@@ -1,5 +1,10 @@
 from app.agent.tools.account_tools import check_account_health, get_connected_accounts
 from app.agent.tools.approval_tools import request_human_approval
+from app.agent.tools.autonomous_tools import (
+    ask_human_for_help,
+    evaluate_marketing_performance,
+    sleep,
+)
 from app.agent.tools.brand_tools import get_brand_knowledge
 from app.agent.tools.campaign_tools import (
     draft_campaign,
@@ -31,6 +36,10 @@ from app.agent.tools.trigger_tools import (
 __all__ = [
     "get_connected_accounts",
     "check_account_health",
+    "request_human_approval",
+    "sleep",
+    "ask_human_for_help",
+    "evaluate_marketing_performance",
     "get_brand_knowledge",
     "draft_campaign",
     "queue_social_post",
@@ -50,5 +59,4 @@ __all__ = [
     "list_marketing_data_sources",
     "get_search_console_opportunities",
     "get_competitor_keyword_gaps",
-    "request_human_approval"
 ]

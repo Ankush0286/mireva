@@ -6,6 +6,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.automation.workers.dm_dispatcher import run_dm_dispatcher
 from app.automation.workers.post_dispatcher import run_post_dispatcher
 from app.automation.workers.quota_reset_worker import run_quota_reset_worker
+from app.automation.workers.strategist_worker import run_strategist_heartbeat
 from app.automation.workers.watcher_worker import run_watcher_worker
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,15 @@ def register_automation_jobs() -> None:
         args=[run_quota_reset_worker, "QuotaResetWorker"],
         id="quota_reset_job",
         name="Quota Reset & Consistency Check",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        _safe_job_wrapper,
+        trigger=IntervalTrigger(seconds=60),
+        args=[run_strategist_heartbeat, "StrategistHeartbeat"],
+        id="strategist_heartbeat_job",
+        name="24/7 Autonomous Strategist Heartbeat",
         replace_existing=True,
     )
 

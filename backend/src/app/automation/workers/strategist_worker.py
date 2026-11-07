@@ -1,0 +1,126 @@
+import logging
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.agent.loop import run_agent_turn
+from app.common.enums import StrategistStatus
+from app.core.agent_config import agent_settings
+from app.db.session import async_session_factory
+from app.modules.strategist.models import StrategistState
+from app.modules.strategist.service import StrategistService
+
+logger = logging.getLogger(__name__)
+
+AUTONOMOUS_CYCLE_PROMPT = """
+You are waking up for your scheduled autonomous growth cycle.
+Execute your 5-step growth loop:
+
+1. WAKE UP & EVALUATE:
+   - Call `evaluate_marketing_performance` to inspect recent post conversions, account quotas, and pipeline health.
+
+2. STRATEGY SYNTHESIS:
+   - Call `get_brand_knowledge` to anchor positioning, personas, and banned words.
+   - Query `get_search_console_opportunities` or `get_competitor_keyword_gaps` if connectors exist.
+
+3. EXECUTE TARGETED ACTIONS:
+   - If account quotas allow, draft or queue 1-2 high-hook posts via `queue_social_post`.
+   - If opportunities exist, stage a personalized DM via `stage_cold_outreach_dm` or add a lead via `add_lead_to_crm`.
+
+4. CLOSE THE CYCLE:
+   - If you encounter a fatal blocker requiring user input, call `ask_human_for_help`.
+   - Otherwise, summarize your actions concisely in markdown and conclude by calling `sleep(duration_minutes, rationale)` (between 30 and 180 minutes).
+""".strip()
+
+
+async def execute_autonomous_cycle(
+    db: AsyncSession,
+    state: StrategistState | None = None,
+) -> bool:
+    """Executes a single autonomous marketing turn inside the dedicated ChatSession."""
+    service = StrategistService(db)
+    active_state = state or await service.get_or_create_state()
+
+    if not active_state.session_id:
+        return False
+
+    logger.info(
+        "🧠 Autonomous Strategist waking up for Cycle #%d...",
+        active_state.cycle_count + 1,
+    )
+
+    active_state.status = StrategistStatus.RUNNING
+    active_state.current_step = "Waking up: evaluating marketing telemetry & brand positioning..."
+    active_state.last_cycle_started_at = datetime.now(UTC)
+    active_state.cycle_count += 1
+    await db.commit()
+
+    try:
+        await run_agent_turn(
+            db=db,
+            session_id=active_state.session_id,
+            user_prompt=AUTONOMOUS_CYCLE_PROMPT,
+            model_override=agent_settings.DEFAULT_MODEL,
+            thinking=True,
+        )
+
+        await db.refresh(active_state)
+
+        # Fallback sleep if the agent completed its turn without calling `sleep` or `ask_human_for_help`
+        if active_state.status == StrategistStatus.RUNNING:
+            active_state.status = StrategistStatus.SLEEPING
+            active_state.next_cycle_at = datetime.now(UTC) + timedelta(minutes=60)
+            active_state.sleep_rationale = (
+                "Completed autonomous evaluation cycle. Resting 60m before next check."
+            )
+            active_state.current_step = "Resting until next scheduled cycle."
+            active_state.last_cycle_completed_at = datetime.now(UTC)
+            await db.commit()
+
+        logger.info(
+            "✅ Autonomous Strategist finished Cycle #%d. Status: %s",
+            active_state.cycle_count,
+            active_state.status.value,
+        )
+        return True
+
+    except Exception as exc:
+        logger.error("Error in autonomous strategist turn: %s", exc, exc_info=True)
+        await db.rollback()
+        refreshed = await service.get_or_create_state()
+        refreshed.status = StrategistStatus.SLEEPING
+        refreshed.next_cycle_at = datetime.now(UTC) + timedelta(minutes=30)
+        refreshed.sleep_rationale = f"Cycle error ({exc}). Retrying in 30 minutes."
+        refreshed.current_step = "Recovering from error; scheduled retry in 30m."
+        await db.commit()
+        return False
+
+
+async def run_strategist_heartbeat(db: AsyncSession | None = None) -> int:
+    """
+    Periodic heartbeat worker invoked by APScheduler every 60 seconds.
+    Returns 1 if a cycle was executed, 0 otherwise.
+    """
+    owns_session = db is None
+    session = db if db is not None else async_session_factory()
+
+    try:
+        service = StrategistService(session)
+        state = await service.get_or_create_state()
+
+        if state.status in (
+            StrategistStatus.PAUSED,
+            StrategistStatus.WAITING_FOR_HUMAN,
+            StrategistStatus.RUNNING,
+        ):
+            return 0
+
+        if state.is_due_to_wake():
+            ran = await execute_autonomous_cycle(session, state)
+            return 1 if ran else 0
+
+        return 0
+
+    finally:
+        if owns_session:
+            await session.close()

@@ -193,3 +193,20 @@ class ConnectorStatus(str, enum.Enum):
     RATE_LIMITED = "rate_limited"
     ERROR = "error"
     DISABLED = "disabled"
+
+
+class StrategistStatus(str, enum.Enum):
+    """Lifecycle status of the 24/7 autonomous marketing strategist."""
+
+    IDLE = "idle"
+    RUNNING = "running"
+    SLEEPING = "sleeping"
+    WAITING_FOR_HUMAN = "waiting_for_human"
+    PAUSED = "paused"
+
+
+class AutonomyLevel(str, enum.Enum):
+    """Determines whether the autonomous strategist stages drafts or dispatches live."""
+
+    STAGED_REVIEW = "staged_review"
+    FULL_AUTO = "full_auto"
