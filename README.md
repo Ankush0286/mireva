@@ -33,7 +33,7 @@ Mireva is not a chatbot that waits for your prompt. It is a full-time, self-regu
 
 ```bash
 # Clone and launch Mireva in minutes
-git clone https://github.com/your-username/mireva.git && cd mireva
+git clone https://github.com/Ankush0286/mireva.git && cd mireva
 ```
 
 > [!TIP]
