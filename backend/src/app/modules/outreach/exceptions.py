@@ -49,7 +49,9 @@ class MessageAlreadyProcessedError(ConflictError):
     """Raised when trying to modify or review an already dispatched message."""
 
     def __init__(self, message_id: UUID | str):
-        super().__init__(f"Outreach message '{message_id}' has already been processed and cannot be reviewed.")
+        super().__init__(
+            f"Outreach message '{message_id}' has already been processed and cannot be reviewed."
+        )
         self.message_id = message_id
 
 

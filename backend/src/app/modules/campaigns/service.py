@@ -41,9 +41,7 @@ class CampaignService:
     async def get_campaign_by_id(self, campaign_id: UUID | str) -> Campaign | None:
         target_id = _ensure_uuid(campaign_id)
         stmt = (
-            select(Campaign)
-            .options(selectinload(Campaign.posts))
-            .where(Campaign.id == target_id)
+            select(Campaign).options(selectinload(Campaign.posts)).where(Campaign.id == target_id)
         )
         result = await self.db.execute(stmt)
         return result.scalars().first()

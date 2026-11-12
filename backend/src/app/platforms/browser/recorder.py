@@ -280,9 +280,15 @@ RECORDER_INJECTION_JS = """
 
 
 def _print_banner() -> None:
-    print(f"\n{BLUE}{BOLD}╔══════════════════════════════════════════════════════════════════════╗{RESET}")
-    print(f"{BLUE}{BOLD}║{RESET}  {CYAN}{BOLD} Mireva Multi-Action Browser Recipe Recorder Studio{RESET}          {BLUE}{BOLD}║{RESET}")
-    print(f"{BLUE}{BOLD}╚══════════════════════════════════════════════════════════════════════╝{RESET}")
+    print(
+        f"\n{BLUE}{BOLD}╔══════════════════════════════════════════════════════════════════════╗{RESET}"
+    )
+    print(
+        f"{BLUE}{BOLD}║{RESET}  {CYAN}{BOLD} Mireva Multi-Action Browser Recipe Recorder Studio{RESET}          {BLUE}{BOLD}║{RESET}"
+    )
+    print(
+        f"{BLUE}{BOLD}╚══════════════════════════════════════════════════════════════════════╝{RESET}"
+    )
 
 
 async def _print_coverage_table(db: AsyncSession) -> None:
@@ -418,7 +424,9 @@ async def sync_all_disk_recipes_to_db(db: AsyncSession) -> int:
             if isinstance(steps, list) and steps:
                 await _upsert_recipe_to_db(db, platform_str, action_str, steps)
                 synced += 1
-                print(f"  {GREEN}✓ Synced{RESET} {file_path.name} -> DB ({platform_str} / {action_str})")
+                print(
+                    f"  {GREEN}✓ Synced{RESET} {file_path.name} -> DB ({platform_str} / {action_str})"
+                )
         except Exception as exc:
             print(f"  {YELLOW}⚠️ Failed to sync {file_path.name}: {exc}{RESET}")
 
@@ -453,12 +461,22 @@ async def record_single_workflow(
     target_url = target_url_override or platform_url_map["default"]
     handle_label = f"@{account.handle}" if account else "Guest Profile"
 
-    print(f"\n{CYAN}{BOLD}┌──────────────────────────────────────────────────────────────────────┐{RESET}")
-    print(f"{CYAN}{BOLD}│{RESET} 🎬 {BOLD}RECORDING:{RESET} {GREEN}{clean_platform.upper()} — {action_meta['label']}{RESET} ({handle_label})")
-    print(f"{CYAN}{BOLD}├──────────────────────────────────────────────────────────────────────┤{RESET}")
+    print(
+        f"\n{CYAN}{BOLD}┌──────────────────────────────────────────────────────────────────────┐{RESET}"
+    )
+    print(
+        f"{CYAN}{BOLD}│{RESET} 🎬 {BOLD}RECORDING:{RESET} {GREEN}{clean_platform.upper()} — {action_meta['label']}{RESET} ({handle_label})"
+    )
+    print(
+        f"{CYAN}{BOLD}├──────────────────────────────────────────────────────────────────────┤{RESET}"
+    )
     print(f"{CYAN}{BOLD}│{RESET} 📍 {BOLD}Starting URL:{RESET}   {target_url}")
-    print(f"{CYAN}{BOLD}│{RESET} 📋 {BOLD}Workflow Guide:{RESET} {DIM}{action_meta['guide']}{RESET}")
-    print(f"{CYAN}{BOLD}└──────────────────────────────────────────────────────────────────────┘{RESET}\n")
+    print(
+        f"{CYAN}{BOLD}│{RESET} 📋 {BOLD}Workflow Guide:{RESET} {DIM}{action_meta['guide']}{RESET}"
+    )
+    print(
+        f"{CYAN}{BOLD}└──────────────────────────────────────────────────────────────────────┘{RESET}\n"
+    )
 
     cleaned_steps: list[dict[str, Any]] = []
     last_click_desc: str | None = None
@@ -486,7 +504,9 @@ async def record_single_workflow(
                 prev_desc = cleaned_steps[-1].get("description", "").lower()
                 if "select from computer" in prev_desc or "upload" in prev_desc:
                     cleaned_steps.pop()
-                    print(f"  {MAGENTA}🔄 [OPTIMIZED]{RESET} Absorbed button click into background file upload")
+                    print(
+                        f"  {MAGENTA}🔄 [OPTIMIZED]{RESET} Absorbed button click into background file upload"
+                    )
 
             # 3. Absorb redundant focus click on a textbox immediately preceding a type step
             if stype == "type" and cleaned_steps:
@@ -494,7 +514,10 @@ async def record_single_workflow(
                 prev_desc = prev_step.get("description", "").lower()
                 if prev_step.get("type") == "click" and (
                     prev_step.get("_is_editable")
-                    or any(w in prev_desc for w in ("textbox", "message...", "caption", "comment", "reply"))
+                    or any(
+                        w in prev_desc
+                        for w in ("textbox", "message...", "caption", "comment", "reply")
+                    )
                 ):
                     popped = cleaned_steps.pop()
                     for old_sel in popped.get("selectors", []):
@@ -506,15 +529,17 @@ async def record_single_workflow(
             if any(word in desc.lower() for word in ("done", "close", "not now")):
                 step["optional"] = True
 
-            cleaned_steps.append({
-                "type": stype,
-                "description": desc,
-                "selectors": selectors,
-                "target": step.get("target"),
-                "variable": step.get("variable"),
-                **({"optional": True} if step.get("optional") else {}),
-                **({"_is_editable": True} if is_editable_target else {}),
-            })
+            cleaned_steps.append(
+                {
+                    "type": stype,
+                    "description": desc,
+                    "selectors": selectors,
+                    "target": step.get("target"),
+                    "variable": step.get("variable"),
+                    **({"optional": True} if step.get("optional") else {}),
+                    **({"_is_editable": True} if is_editable_target else {}),
+                }
+            )
 
             step_num = len(cleaned_steps)
             sel_preview = selectors[0] if selectors else step.get("target", "N/A")
@@ -572,13 +597,23 @@ async def record_single_workflow(
     except Exception:
         pass
 
-    print(f"\n{GREEN}{BOLD}╔══════════════════════════════════════════════════════════════════════╗{RESET}")
-    print(f"{GREEN}{BOLD}║{RESET} ✅ {BOLD}SUCCESS:{RESET} Saved {len(cleaned_steps)} steps for {BOLD}{saved_recipe.name}{RESET}")
-    print(f"{GREEN}{BOLD}╠══════════════════════════════════════════════════════════════════════╣{RESET}")
+    print(
+        f"\n{GREEN}{BOLD}╔══════════════════════════════════════════════════════════════════════╗{RESET}"
+    )
+    print(
+        f"{GREEN}{BOLD}║{RESET} ✅ {BOLD}SUCCESS:{RESET} Saved {len(cleaned_steps)} steps for {BOLD}{saved_recipe.name}{RESET}"
+    )
+    print(
+        f"{GREEN}{BOLD}╠══════════════════════════════════════════════════════════════════════╣{RESET}"
+    )
     print(f"{GREEN}{BOLD}║{RESET} 💾 {BOLD}Disk JSON:{RESET}  {disk_file.resolve()}")
-    print(f"{GREEN}{BOLD}║{RESET} 🗄️  {BOLD}DB Record:{RESET}  {saved_recipe.id} (Action: {clean_action})")
+    print(
+        f"{GREEN}{BOLD}║{RESET} 🗄️  {BOLD}DB Record:{RESET}  {saved_recipe.id} (Action: {clean_action})"
+    )
     print(f"{GREEN}{BOLD}║{RESET} 🍪 {BOLD}Cookies:{RESET}    {storage_state_path.resolve()}")
-    print(f"{GREEN}{BOLD}╚══════════════════════════════════════════════════════════════════════╝{RESET}\n")
+    print(
+        f"{GREEN}{BOLD}╚══════════════════════════════════════════════════════════════════════╝{RESET}\n"
+    )
     return True
 
 
@@ -622,11 +657,17 @@ async def run_interactive_cli(
 
         action_keys = list(ACTION_DEFINITIONS.keys())
         if not initial_action:
-            print(f"\n{BOLD}Select Workflow Action to Record for {selected_platform.capitalize()}:{RESET}")
+            print(
+                f"\n{BOLD}Select Workflow Action to Record for {selected_platform.capitalize()}:{RESET}"
+            )
             for idx, a_key in enumerate(action_keys, start=1):
                 meta = ACTION_DEFINITIONS[a_key]
-                print(f"  {CYAN}[{idx}]{RESET} {BOLD}{meta['label']:<24}{RESET} {DIM}({a_key}){RESET}")
-            print(f"  {MAGENTA}[A]{RESET} {BOLD}Record All 3 Default Write Recipes Sequentially{RESET}")
+                print(
+                    f"  {CYAN}[{idx}]{RESET} {BOLD}{meta['label']:<24}{RESET} {DIM}({a_key}){RESET}"
+                )
+            print(
+                f"  {MAGENTA}[A]{RESET} {BOLD}Record All 3 Default Write Recipes Sequentially{RESET}"
+            )
 
             a_choice = (
                 await asyncio.to_thread(
@@ -641,7 +682,9 @@ async def run_interactive_cli(
                 await _print_coverage_table(db)
                 return
 
-            a_idx = max(0, min(len(action_keys) - 1, int(a_choice) - 1)) if a_choice.isdigit() else 0
+            a_idx = (
+                max(0, min(len(action_keys) - 1, int(a_choice) - 1)) if a_choice.isdigit() else 0
+            )
             selected_action = action_keys[a_idx]
         else:
             selected_action = initial_action.lower()

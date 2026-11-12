@@ -127,6 +127,4 @@ class DataConnector(AuditBase):
     def mark_error(self, error: str, is_auth_error: bool = False) -> None:
         """Logs diagnostic error and updates status."""
         self.last_error_message = error
-        self.status = (
-            ConnectorStatus.NEEDS_REAUTH if is_auth_error else ConnectorStatus.ERROR
-        )
+        self.status = ConnectorStatus.NEEDS_REAUTH if is_auth_error else ConnectorStatus.ERROR

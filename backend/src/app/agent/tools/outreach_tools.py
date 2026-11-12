@@ -166,7 +166,9 @@ async def stage_cold_outreach_dm(
             account = await acc_service.get_by_id_or_raise(UUID(account_id))
 
             # Check if Full Auto policy is active
-            res = await db.execute(select(StrategistState).order_by(StrategistState.created_at.desc()).limit(1))
+            res = await db.execute(
+                select(StrategistState).order_by(StrategistState.created_at.desc()).limit(1)
+            )
             state = res.scalars().first()
             is_full_auto = state is not None and state.autonomy_level == AutonomyLevel.FULL_AUTO
 
@@ -194,6 +196,7 @@ async def stage_cold_outreach_dm(
             }
     except (AppError, ValueError) as exc:
         return {"error": str(exc)}
+
 
 @marketing_agent.tool
 async def review_staged_dm(

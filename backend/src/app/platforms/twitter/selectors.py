@@ -20,24 +20,16 @@ PROFILE_NAV_ICON = 'a[data-testid="AppTabBar_Profile_Link"]'
 
 # Tweet / Post Compose Box
 TWEET_TEXTAREA = (
-    'div[data-testid="tweetTextarea_0"], '
-    'div[role="textbox"][data-testid^="tweetTextarea_"]'
+    'div[data-testid="tweetTextarea_0"], div[role="textbox"][data-testid^="tweetTextarea_"]'
 )
 TWEET_FILE_INPUT = 'input[data-testid="fileInput"]'
-TWEET_SUBMIT_BUTTON = (
-    'button[data-testid="tweetButtonInline"], '
-    'button[data-testid="tweetButton"]'
-)
+TWEET_SUBMIT_BUTTON = 'button[data-testid="tweetButtonInline"], button[data-testid="tweetButton"]'
 TWEET_POSTED_TOAST = 'div[data-testid="toast"]'
 
 # Direct Messages (DM) Flow
-PROFILE_DM_BUTTON = (
-    'button[data-testid="sendDMFromProfile"], '
-    'div[data-testid="sendDMFromProfile"]'
-)
+PROFILE_DM_BUTTON = 'button[data-testid="sendDMFromProfile"], div[data-testid="sendDMFromProfile"]'
 DM_TEXTAREA = (
-    'div[data-testid="dmComposerTextInput"], '
-    'div[role="textbox"][aria-label="Start a new message"]'
+    'div[data-testid="dmComposerTextInput"], div[role="textbox"][aria-label="Start a new message"]'
 )
 DM_SEND_BUTTON = 'button[data-testid="dmComposerSendButton"]'
 

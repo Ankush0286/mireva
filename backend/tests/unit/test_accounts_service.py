@@ -215,7 +215,9 @@ async def test_record_dm_activity_and_quota_check(db_session: AsyncSession):
 async def test_daily_quota_auto_reset(db_session: AsyncSession):
     service = AccountService(db_session)
     account = await service.create_account(
-        CreateAccountCommand(platform=PlatformType.TWITTER, handle="reset_tester", daily_post_limit=1)
+        CreateAccountCommand(
+            platform=PlatformType.TWITTER, handle="reset_tester", daily_post_limit=1
+        )
     )
 
     await service.record_post_activity(account.id)

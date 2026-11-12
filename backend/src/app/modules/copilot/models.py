@@ -167,6 +167,4 @@ class ToolExecutionLog(AuditBase):
         back_populates="tool_executions",
     )
 
-    __table_args__ = (
-        Index("ix_tool_executions_session_status", "session_id", "status"),
-    )
+    __table_args__ = (Index("ix_tool_executions_session_status", "session_id", "status"),)

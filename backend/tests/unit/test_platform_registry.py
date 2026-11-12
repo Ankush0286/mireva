@@ -16,7 +16,9 @@ class DummyFacebookAdapter(BasePlatformAdapter):
     async def authenticate(self) -> bool:
         return True
 
-    async def publish_post(self, content: str, media_paths: list[str] | None = None) -> PublishResult:
+    async def publish_post(
+        self, content: str, media_paths: list[str] | None = None
+    ) -> PublishResult:
         _ = (content, media_paths)
         return PublishResult(platform_post_id="dummy_123")
 

@@ -197,7 +197,9 @@ async def run_agent_turn(
 
     # 6. Extract Usage Directly from Property & Persist Assistant Message
     assistant_reply = str(result.output)
-    model_label = model_override if isinstance(model_override, str) else agent_settings.DEFAULT_MODEL
+    model_label = (
+        model_override if isinstance(model_override, str) else agent_settings.DEFAULT_MODEL
+    )
     usage_metrics = _extract_run_usage(result.usage, model_label)
 
     assistant_msg = await copilot_service.add_message(
@@ -314,7 +316,9 @@ async def stream_agent_turn(
             await asyncio.sleep(0.012)
 
     full_response = "".join(accumulated_chunks)
-    model_label = model_override if isinstance(model_override, str) else agent_settings.DEFAULT_MODEL
+    model_label = (
+        model_override if isinstance(model_override, str) else agent_settings.DEFAULT_MODEL
+    )
     usage_metrics = _extract_run_usage(run_usage, model_label)
 
     # 5. Emit live usage event over SSE for UsageMeter

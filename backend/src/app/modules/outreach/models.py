@@ -98,9 +98,7 @@ class Lead(AuditBase):
         cascade="all, delete-orphan",
     )
 
-    __table_args__ = (
-        UniqueConstraint("platform", "handle", name="uq_leads_platform_handle"),
-    )
+    __table_args__ = (UniqueConstraint("platform", "handle", name="uq_leads_platform_handle"),)
 
     def can_contact(self) -> bool:
         """Verifies if the lead is in a stage that permits outbound outreach."""
@@ -237,9 +235,7 @@ class OutreachMessage(AuditBase):
         lazy="joined",
     )
 
-    __table_args__ = (
-        Index("ix_outreach_messages_status_created", "status", "created_at"),
-    )
+    __table_args__ = (Index("ix_outreach_messages_status_created", "status", "created_at"),)
 
     def mark_as_approved(self, edited_content: str | None = None) -> None:
         """Approves staged message for worker dispatch."""

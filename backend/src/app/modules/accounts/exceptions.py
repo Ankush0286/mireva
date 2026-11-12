@@ -8,17 +8,20 @@ class AccountNotFoundError(NotFoundError):
         super().__init__(f"Connected account with ID '{account_id}' was not found.")
         self.account_id = account_id
 
+
 class AccountAlreadyExistsError(ConflictError):
     def __init__(self, platform: str, handle: str):
         super().__init__(f"Account @{handle} on {platform} is already connected.")
         self.platform = platform
         self.handle = handle
 
+
 class DailyPostQuotaExceededError(RateLimitExceededError):
     def __init__(self, handle: str, limit: int):
         super().__init__(f"Account @{handle} reached its daily limit of {limit} posts.")
         self.handle = handle
         self.limit = limit
+
 
 class AccountInCooldownError(RateLimitExceededError):
     def __init__(self, handle: str, until_iso: str):

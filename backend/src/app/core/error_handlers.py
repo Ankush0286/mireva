@@ -78,9 +78,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(RateLimitExceededError)
-    async def rate_limit_handler(
-        request: Request, exc: RateLimitExceededError
-    ) -> JSONResponse:
+    async def rate_limit_handler(request: Request, exc: RateLimitExceededError) -> JSONResponse:
         logger.warning(
             "Rate limit exceeded [%s %s]: %s",
             request.method,
@@ -110,9 +108,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(AppError)
-    async def generic_app_error_handler(
-        request: Request, exc: AppError
-    ) -> JSONResponse:
+    async def generic_app_error_handler(request: Request, exc: AppError) -> JSONResponse:
         """Fallback catcher for any other custom domain error inheriting from AppError."""
         logger.error(
             "Unhandled domain error [%s %s]: %s",
@@ -131,9 +127,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # =========================================================================
 
     @app.exception_handler(EncryptionError)
-    async def encryption_error_handler(
-        request: Request, exc: EncryptionError
-    ) -> JSONResponse:
+    async def encryption_error_handler(request: Request, exc: EncryptionError) -> JSONResponse:
         logger.critical(
             "Cryptographic failure on request [%s %s]: %s",
             request.method,
@@ -209,9 +203,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # =========================================================================
 
     @app.exception_handler(Exception)
-    async def unhandled_exception_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         """
         Catches any unexpected Python crash.
         Logs the full stack trace internally and ensures zero secrets/paths

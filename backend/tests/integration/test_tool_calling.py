@@ -176,6 +176,7 @@ async def test_copilot_chat_and_sse_stream_api_endpoints(client: AsyncClient):
         assert "Campaign" in stream_res.text
         assert "launch!" in stream_res.text
 
+
 @pytest.mark.anyio
 async def test_stream_agent_turn_persists_streamed_response_and_usage(
     db_session: AsyncSession,

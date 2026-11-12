@@ -69,7 +69,9 @@ class TwitterAdapter(BasePlatformAdapter):
             storage_state_path=storage_state_path if storage_state_path.exists() else None,
         )
 
-        self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
+        self._page = (
+            self._context.pages[0] if self._context.pages else await self._context.new_page()
+        )
         return self._page
 
     async def _dismiss_popups(self, page: Page) -> None:
@@ -95,7 +97,9 @@ class TwitterAdapter(BasePlatformAdapter):
         # Check if already authenticated via session cookies
         home_nav = page.locator(selectors.HOME_NAV_ICON).first
         if await home_nav.is_visible(timeout=4000):
-            logger.info("Twitter @%s already authenticated via persistent session.", self.account.handle)
+            logger.info(
+                "Twitter @%s already authenticated via persistent session.", self.account.handle
+            )
             if self._context:
                 await self.session_manager.save_session_state(self._context, self.account.id)
             return True
@@ -121,7 +125,9 @@ class TwitterAdapter(BasePlatformAdapter):
         # Handle unusual activity challenge (asks for username/phone confirmation)
         challenge_input = page.locator(selectors.LOGIN_UNUSUAL_ACTIVITY_INPUT).first
         if await challenge_input.is_visible(timeout=2500):
-            logger.info("Twitter requested secondary handle confirmation for @%s", self.account.handle)
+            logger.info(
+                "Twitter requested secondary handle confirmation for @%s", self.account.handle
+            )
             await human_type(page, challenge_input, self.account.handle)
             await random_delay(0.5, 1.0)
             await page.locator(selectors.LOGIN_NEXT_BUTTON).first.click()
@@ -130,7 +136,9 @@ class TwitterAdapter(BasePlatformAdapter):
         # Step 2: Password
         password = decrypt_token(self.account.encrypted_api_secret)
         if not password:
-            logger.error("No password credentials found in vault for Twitter @%s", self.account.handle)
+            logger.error(
+                "No password credentials found in vault for Twitter @%s", self.account.handle
+            )
             return False
 
         password_input = page.locator(selectors.LOGIN_PASSWORD_INPUT).first
@@ -172,7 +180,9 @@ class TwitterAdapter(BasePlatformAdapter):
         page = await self._get_or_create_page()
         is_authenticated = await self.authenticate()
         if not is_authenticated:
-            raise TwitterAutomationError(f"Failed to authenticate Twitter session for @{self.account.handle}")
+            raise TwitterAutomationError(
+                f"Failed to authenticate Twitter session for @{self.account.handle}"
+            )
 
         logger.info("Opening Twitter compose box for @%s...", self.account.handle)
         await page.goto("https://x.com/home", wait_until="domcontentloaded")
@@ -226,7 +236,9 @@ class TwitterAdapter(BasePlatformAdapter):
         page = await self._get_or_create_page()
         is_authenticated = await self.authenticate()
         if not is_authenticated:
-            raise TwitterAutomationError(f"Failed to authenticate Twitter session for @{self.account.handle}")
+            raise TwitterAutomationError(
+                f"Failed to authenticate Twitter session for @{self.account.handle}"
+            )
 
         logger.info("Navigating to profile @%s to dispatch Twitter DM...", clean_handle)
         await page.goto(f"https://x.com/{clean_handle}", wait_until="domcontentloaded")
@@ -236,7 +248,9 @@ class TwitterAdapter(BasePlatformAdapter):
         # Click Message button on profile header
         dm_btn = page.locator(selectors.PROFILE_DM_BUTTON).first
         if not await dm_btn.is_visible(timeout=5000):
-            raise TwitterAutomationError(f"Direct message button not accessible on Twitter @{clean_handle}")
+            raise TwitterAutomationError(
+                f"Direct message button not accessible on Twitter @{clean_handle}"
+            )
 
         await dm_btn.click()
         await random_delay(2.0, 3.5)
@@ -259,7 +273,11 @@ class TwitterAdapter(BasePlatformAdapter):
         await random_delay(2.0, 3.5)
 
         parsed_url = urlparse(page.url)
-        thread_id = parsed_url.path.strip("/").split("/")[-1] if "messages" in page.url else "unknown_thread"
+        thread_id = (
+            parsed_url.path.strip("/").split("/")[-1]
+            if "messages" in page.url
+            else "unknown_thread"
+        )
         logger.info("✅ Twitter DM successfully sent to @%s in thread %s", clean_handle, thread_id)
 
         if self._context:
@@ -277,7 +295,9 @@ class TwitterAdapter(BasePlatformAdapter):
         page = await self._get_or_create_page()
         is_authenticated = await self.authenticate()
         if not is_authenticated:
-            raise TwitterAutomationError(f"Failed to authenticate Twitter session for @{self.account.handle}")
+            raise TwitterAutomationError(
+                f"Failed to authenticate Twitter session for @{self.account.handle}"
+            )
 
         logger.info("Scraping timeline for target profile @%s...", clean_handle)
         await page.goto(f"https://x.com/{clean_handle}", wait_until="domcontentloaded")

@@ -64,9 +64,7 @@ async def test_create_new_primary_kit_unsets_previous_primary(db_session: AsyncS
 @pytest.mark.anyio
 async def test_update_brand_kit_sets_primary_unsets_others(db_session: AsyncSession):
     service = BrandService(db_session)
-    primary = await service.create_brand_kit(
-        CreateBrandKitCommand(name="Brand A", is_primary=True)
-    )
+    primary = await service.create_brand_kit(CreateBrandKitCommand(name="Brand A", is_primary=True))
     secondary = await service.create_brand_kit(
         CreateBrandKitCommand(name="Brand B", is_primary=False)
     )
@@ -152,7 +150,11 @@ async def test_to_prompt_context_with_empty_and_populated_kit(db_session: AsyncS
             banned_words=["delve", "leverage"],
             preferred_phrases=["built for founders", "ship fast"],
             target_personas=[
-                {"title": "Solo Founders", "pain_points": ["No time"], "pitch_angle": "Automate now"}
+                {
+                    "title": "Solo Founders",
+                    "pain_points": ["No time"],
+                    "pitch_angle": "Automate now",
+                }
             ],
             competitor_advantages=[
                 {"competitor": "Legacy Corp", "why_we_win": "Zero per-seat pricing"}

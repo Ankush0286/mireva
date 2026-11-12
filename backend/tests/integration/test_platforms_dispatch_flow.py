@@ -20,7 +20,9 @@ from app.platforms.registry import PlatformRegistry
 
 
 @pytest.mark.anyio
-async def test_platform_registry_to_campaign_dispatch_pipeline(db_session: AsyncSession, tmp_path: Path):
+async def test_platform_registry_to_campaign_dispatch_pipeline(
+    db_session: AsyncSession, tmp_path: Path
+):
     """
     Verifies the complete integration flow asynchronously:
     1. Account is registered in the DB.

@@ -50,9 +50,7 @@ async def list_activity_logs(
     entity_type: str | None = Query(
         default=None, description="Filter by target entity type (account, campaign, post, lead)"
     ),
-    entity_id: UUID | None = Query(
-        default=None, description="Filter by specific entity UUID"
-    ),
+    entity_id: UUID | None = Query(default=None, description="Filter by specific entity UUID"),
     since: datetime | None = Query(
         default=None, description="Filter events created on or after this timestamp"
     ),

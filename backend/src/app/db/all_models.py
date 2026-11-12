@@ -28,5 +28,5 @@ __all__ = [
     "ActionRecipe",
     "DataConnector",
     "BrandKit",
-    "StrategistState"
+    "StrategistState",
 ]

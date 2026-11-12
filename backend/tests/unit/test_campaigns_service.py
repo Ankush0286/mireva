@@ -139,6 +139,7 @@ async def test_campaign_is_active_helper():
         end_date=now + timedelta(days=5),
     )
     from app.modules.campaigns.models import Campaign
+
     c = Campaign(
         name=active_camp.name,
         status=active_camp.status,
@@ -341,7 +342,9 @@ async def test_list_posts_by_campaign_with_filter(db_session: AsyncSession):
     campaign = await service.create_campaign(CreateCampaignCommand(name="Filter Camp"))
 
     await service.queue_post(
-        QueuePostCommand(campaign_id=campaign.id, account_id=account.id, content="P1", status=PostStatus.DRAFT)
+        QueuePostCommand(
+            campaign_id=campaign.id, account_id=account.id, content="P1", status=PostStatus.DRAFT
+        )
     )
     await service.queue_post(
         QueuePostCommand(
@@ -368,7 +371,9 @@ async def test_list_posts_multiple_statuses_query(db_session: AsyncSession):
     campaign = await service.create_campaign(CreateCampaignCommand(name="Multi Camp"))
 
     await service.queue_post(
-        QueuePostCommand(campaign_id=campaign.id, account_id=account.id, content="P1", status=PostStatus.DRAFT)
+        QueuePostCommand(
+            campaign_id=campaign.id, account_id=account.id, content="P1", status=PostStatus.DRAFT
+        )
     )
     await service.queue_post(
         QueuePostCommand(
@@ -401,12 +406,16 @@ async def test_record_failure_retry_mechanism(db_session: AsyncSession):
     )
 
     # 1st failure -> stays SCHEDULED for retry
-    await service.record_failure(RecordPostFailureCommand(post_id=post.id, error_message="Rate limit 429"))
+    await service.record_failure(
+        RecordPostFailureCommand(post_id=post.id, error_message="Rate limit 429")
+    )
     assert post.retry_count == 1
     assert post.status == PostStatus.SCHEDULED
 
     # 2nd failure -> reaches max_retries, transitions to FAILED
-    await service.record_failure(RecordPostFailureCommand(post_id=post.id, error_message="Rate limit 429"))
+    await service.record_failure(
+        RecordPostFailureCommand(post_id=post.id, error_message="Rate limit 429")
+    )
     assert post.retry_count == 2
     assert post.status == PostStatus.FAILED
     assert post.last_error_message == "Rate limit 429"

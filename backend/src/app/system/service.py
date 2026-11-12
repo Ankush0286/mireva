@@ -244,7 +244,11 @@ class SystemDiagnosticsService:
         try:
             await self.db.scalar(text("SELECT 1"))
             latency = round((time.perf_counter() - start) * 1000, 2)
-            mode = "Supabase PostgreSQL" if "supabase" in settings.DATABASE_URL else "PostgreSQL Database"
+            mode = (
+                "Supabase PostgreSQL"
+                if "supabase" in settings.DATABASE_URL
+                else "PostgreSQL Database"
+            )
 
             return SubsystemHealth(
                 id="database",
@@ -480,13 +484,19 @@ class SystemDiagnosticsService:
         )
 
         entity_counts = {
-            "accounts": (await self.db.scalar(select(func.count()).select_from(ConnectedAccount))) or 0,
+            "accounts": (await self.db.scalar(select(func.count()).select_from(ConnectedAccount)))
+            or 0,
             "campaigns": (await self.db.scalar(select(func.count()).select_from(Campaign))) or 0,
-            "scheduled_posts": (await self.db.scalar(select(func.count()).select_from(ScheduledPost))) or 0,
+            "scheduled_posts": (
+                await self.db.scalar(select(func.count()).select_from(ScheduledPost))
+            )
+            or 0,
             "leads": (await self.db.scalar(select(func.count()).select_from(Lead))) or 0,
-            "trigger_rules": (await self.db.scalar(select(func.count()).select_from(TriggerRule))) or 0,
+            "trigger_rules": (await self.db.scalar(select(func.count()).select_from(TriggerRule)))
+            or 0,
             "recipes": (await self.db.scalar(select(func.count()).select_from(ActionRecipe))) or 0,
-            "connectors": (await self.db.scalar(select(func.count()).select_from(DataConnector))) or 0,
+            "connectors": (await self.db.scalar(select(func.count()).select_from(DataConnector)))
+            or 0,
         }
 
         return SystemDiagnosticsResponse(

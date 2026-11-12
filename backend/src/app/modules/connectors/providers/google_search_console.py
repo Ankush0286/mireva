@@ -46,12 +46,14 @@ class GoogleSearchConsoleProvider(BaseConnectorProvider):
             )
 
         def _do_refresh() -> str:
-            payload = urllib.parse.urlencode({
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "refresh_token": self.refresh_token,
-                "grant_type": "refresh_token",
-            }).encode("utf-8")
+            payload = urllib.parse.urlencode(
+                {
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                    "refresh_token": self.refresh_token,
+                    "grant_type": "refresh_token",
+                }
+            ).encode("utf-8")
 
             req = urllib.request.Request(GOOGLE_TOKEN_URL, data=payload, method="POST")
             req.add_header("Content-Type", "application/x-www-form-urlencoded")
@@ -156,18 +158,22 @@ class GoogleSearchConsoleProvider(BaseConnectorProvider):
             if 3.5 <= position <= 20.0 and impressions >= min_impressions:
                 # Priority score: Higher impressions + lower position + low CTR = bigger opportunity
                 position_weight = max(1.0, 21.0 - position)
-                score = round(min(100.0, (impressions / 20.0) * (1.0 - ctr) * (position_weight / 5.0)), 1)
+                score = round(
+                    min(100.0, (impressions / 20.0) * (1.0 - ctr) * (position_weight / 5.0)), 1
+                )
 
-                opportunities.append({
-                    "query": query,
-                    "page_url": page_url,
-                    "impressions": impressions,
-                    "clicks": clicks,
-                    "ctr": round(ctr, 3),
-                    "position": position,
-                    "opportunity_type": "striking_distance",
-                    "score": score,
-                })
+                opportunities.append(
+                    {
+                        "query": query,
+                        "page_url": page_url,
+                        "impressions": impressions,
+                        "clicks": clicks,
+                        "ctr": round(ctr, 3),
+                        "position": position,
+                        "opportunity_type": "striking_distance",
+                        "score": score,
+                    }
+                )
 
         opportunities.sort(key=lambda x: x["score"], reverse=True)
         return opportunities[:limit]

@@ -95,9 +95,7 @@ async def evaluate_marketing_performance(
         leads_count = (await db.scalar(select(func.count()).select_from(Lead))) or 0
         converted_count = (
             await db.scalar(
-                select(func.count())
-                .select_from(Lead)
-                .where(Lead.stage == LeadStage.CONVERTED)
+                select(func.count()).select_from(Lead).where(Lead.stage == LeadStage.CONVERTED)
             )
         ) or 0
 
@@ -112,9 +110,7 @@ async def evaluate_marketing_performance(
 
         # Fetch recent trigger matches to report review outcomes
         matches_res = await db.execute(
-            select(TriggerMatch)
-            .order_by(TriggerMatch.updated_at.desc())
-            .limit(15)
+            select(TriggerMatch).order_by(TriggerMatch.updated_at.desc()).limit(15)
         )
         recent_matches = list(matches_res.scalars().all())
 
@@ -132,8 +128,7 @@ async def evaluate_marketing_performance(
             .limit(5)
         )
         recent_issues = [
-            {"title": log.title, "error": log.description}
-            for log in failures_res.scalars().all()
+            {"title": log.title, "error": log.description} for log in failures_res.scalars().all()
         ]
 
         return {
@@ -168,7 +163,8 @@ async def evaluate_marketing_performance(
                         "content_preview": dm.content[:80],
                     }
                     for dm in recent_dms
-                    if dm.status in (OutreachMessageStatus.APPROVED, OutreachMessageStatus.DISPATCHED)
+                    if dm.status
+                    in (OutreachMessageStatus.APPROVED, OutreachMessageStatus.DISPATCHED)
                 ],
                 "rejected_dms_by_human": [
                     {

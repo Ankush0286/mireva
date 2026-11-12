@@ -67,7 +67,9 @@ class ActionRecipeRunner:
                 target_selector = step.get("target", "input[type='file']")
                 file_path = variables.get(step.get("variable", "media_path"))
                 if not file_path:
-                    raise RecipeExecutionError(f"Upload step missing variable '{step.get('variable')}'")
+                    raise RecipeExecutionError(
+                        f"Upload step missing variable '{step.get('variable')}'"
+                    )
 
                 from app.platforms.media_utils import resolve_media_path
 
@@ -85,7 +87,9 @@ class ActionRecipeRunner:
                         file_chooser = await fc_info.value
                         await file_chooser.set_files(str(resolved_file))
                     else:
-                        raise RecipeExecutionError(f"Could not find upload input for: {description}")
+                        raise RecipeExecutionError(
+                            f"Could not find upload input for: {description}"
+                        )
 
                 await random_delay(2.5, 4.0)
                 continue

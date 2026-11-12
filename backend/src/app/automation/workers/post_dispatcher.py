@@ -61,7 +61,9 @@ async def _dispatch_single_post(
             if account.is_in_cooldown()
             else f"Daily post limit reached ({account.daily_posts_sent}/{account.daily_post_limit})"
         )
-        logger.warning("Account @%s cannot post: %s. Skipping post %s.", account.handle, reason, post_id)
+        logger.warning(
+            "Account @%s cannot post: %s. Skipping post %s.", account.handle, reason, post_id
+        )
         post.last_error_message = reason
         await db.commit()
         return False
@@ -69,13 +71,17 @@ async def _dispatch_single_post(
     # 2. Anti-Ban Throttling Slot Check
     acquired = await account_throttler.wait_and_acquire(account_id, max_wait_seconds=5.0)
     if not acquired:
-        logger.info("Account @%s throttled for anti-ban pacing. Deferring post %s.", account.handle, post_id)
+        logger.info(
+            "Account @%s throttled for anti-ban pacing. Deferring post %s.", account.handle, post_id
+        )
         return False
 
     # 3. Atomically Claim the Post (Prevents duplicate posts across concurrent workers)
     claimed = await _claim_post_for_publishing(db, post_id)
     if not claimed:
-        logger.debug("Post %s was already claimed or cancelled by another worker. Skipping.", post_id)
+        logger.debug(
+            "Post %s was already claimed or cancelled by another worker. Skipping.", post_id
+        )
         return False
 
     # Read necessary properties into memory before launching browser
@@ -87,7 +93,12 @@ async def _dispatch_single_post(
     # 4. Execute Platform Adapter
     try:
         adapter = PlatformRegistry.get_adapter(account)
-        logger.info("Dispatching post %s via %s adapter for @%s...", post_id, account_platform, account_handle)
+        logger.info(
+            "Dispatching post %s via %s adapter for @%s...",
+            post_id,
+            account_platform,
+            account_handle,
+        )
 
         try:
             result = await adapter.publish_post(
@@ -122,7 +133,9 @@ async def _dispatch_single_post(
         return True
 
     except Exception as exc:
-        logger.error("Failed to publish post %s for @%s: %s", post_id, account_handle, exc, exc_info=True)
+        logger.error(
+            "Failed to publish post %s for @%s: %s", post_id, account_handle, exc, exc_info=True
+        )
         # Rollback any pending transaction state to keep session clean
         await db.rollback()
         await campaign_service.record_failure(

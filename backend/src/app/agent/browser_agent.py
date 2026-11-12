@@ -172,9 +172,7 @@ async def observe_screen(ctx: RunContext[BrowserAgentDeps]) -> str:
 
 
 @browser_sub_agent.tool
-async def click_element(
-    ctx: RunContext[BrowserAgentDeps], agent_id: int, description: str
-) -> str:
+async def click_element(ctx: RunContext[BrowserAgentDeps], agent_id: int, description: str) -> str:
     """Clicks an interactive element by its numeric `[agent_id]` number."""
     page = ctx.deps.page
     target = page.locator(f'[data-agent-id="{agent_id}"]').first
@@ -187,7 +185,9 @@ async def click_element(
         await asyncio.sleep(2.0)
         return await get_distilled_ui(page)
     except Exception as exc:
-        return f"ERROR clicking [{agent_id}] ({description}): {exc}\n\n" + await get_distilled_ui(page)
+        return f"ERROR clicking [{agent_id}] ({description}): {exc}\n\n" + await get_distilled_ui(
+            page
+        )
 
 
 @browser_sub_agent.tool

@@ -120,7 +120,9 @@ async def _dispatch_single_dm(
                 actor="dm_dispatcher",
             )
         )
-        logger.info("✅ Cold DM %s dispatched to @%s (Thread: %s)", message_id, recipient_handle, thread_id)
+        logger.info(
+            "✅ Cold DM %s dispatched to @%s (Thread: %s)", message_id, recipient_handle, thread_id
+        )
         return True
 
     except Exception as exc:
@@ -169,7 +171,9 @@ async def run_dm_dispatcher(db: AsyncSession | None = None) -> int:
         if not approved_messages:
             return 0
 
-        logger.info("DMDispatcher: Found %d approved cold DMs ready for delivery.", len(approved_messages))
+        logger.info(
+            "DMDispatcher: Found %d approved cold DMs ready for delivery.", len(approved_messages)
+        )
 
         for msg in approved_messages:
             try:

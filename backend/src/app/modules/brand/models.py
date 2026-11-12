@@ -131,7 +131,11 @@ class BrandKit(AuditBase):
 
         if self.key_links:
             links_str = ", ".join(
-                [f"{link.get('title')}: {link.get('url')}" for link in self.key_links if link.get("url")]
+                [
+                    f"{link.get('title')}: {link.get('url')}"
+                    for link in self.key_links
+                    if link.get("url")
+                ]
             )
             if links_str:
                 lines.append(f"Key Reference Links: {links_str}")

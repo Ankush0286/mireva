@@ -30,7 +30,9 @@ def resolve_media_path(media_input: str) -> Path:
 
         local_file = MEDIA_DIR / f"downloaded_{url_hash}{ext}"
         if not local_file.exists():
-            logger.info("Downloading remote media to local cache: %s -> %s", clean_input, local_file)
+            logger.info(
+                "Downloading remote media to local cache: %s -> %s", clean_input, local_file
+            )
             headers = {"User-Agent": "Mozilla/5.0"}
             req = urllib.request.Request(clean_input, headers=headers)
             with urllib.request.urlopen(req, timeout=20) as resp, open(local_file, "wb") as f:

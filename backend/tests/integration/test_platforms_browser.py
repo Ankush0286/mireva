@@ -82,14 +82,16 @@ async def test_stealth_driver_and_human_behavior_e2e(tmp_path: Path):
         # -------------------------------------------------------------
         # 4. Verify cookie persistence & session saving
         # -------------------------------------------------------------
-        await context.add_cookies([
-            {
-                "name": "test_auth_token",
-                "value": "secret_session_cookie_xyz",
-                "domain": "localhost",
-                "path": "/",
-            }
-        ])
+        await context.add_cookies(
+            [
+                {
+                    "name": "test_auth_token",
+                    "value": "secret_session_cookie_xyz",
+                    "domain": "localhost",
+                    "path": "/",
+                }
+            ]
+        )
 
         saved_path = await session_mgr.save_session_state(context, account_id)
         assert saved_path.exists()

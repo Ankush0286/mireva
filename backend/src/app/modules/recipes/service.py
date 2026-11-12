@@ -74,7 +74,9 @@ class RecipeService:
         )
         res = await self.db.execute(stmt)
         if res.scalars().first():
-            platform_str = cmd.platform.value if hasattr(cmd.platform, "value") else str(cmd.platform)
+            platform_str = (
+                cmd.platform.value if hasattr(cmd.platform, "value") else str(cmd.platform)
+            )
             raise RecipeAlreadyExistsError(platform=platform_str, name=clean_name)
 
         if cmd.is_default:
@@ -107,7 +109,11 @@ class RecipeService:
                 )
                 res = await self.db.execute(stmt)
                 if res.scalars().first():
-                    platform_str = recipe.platform.value if hasattr(recipe.platform, "value") else str(recipe.platform)
+                    platform_str = (
+                        recipe.platform.value
+                        if hasattr(recipe.platform, "value")
+                        else str(recipe.platform)
+                    )
                     raise RecipeAlreadyExistsError(platform=platform_str, name=clean_name)
                 recipe.name = clean_name
 

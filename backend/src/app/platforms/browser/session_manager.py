@@ -45,9 +45,7 @@ class BrowserSessionManager:
             logger.warning("Corrupted storage state for account %s: %s", account_id, exc)
             return False
 
-    async def save_session_state(
-        self, context: BrowserContext, account_id: UUID | str
-    ) -> Path:
+    async def save_session_state(self, context: BrowserContext, account_id: UUID | str) -> Path:
         """Dumps current cookies and local storage to storage_state.json."""
         target_path = self.get_storage_state_path(account_id)
         await context.storage_state(path=str(target_path))

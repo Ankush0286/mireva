@@ -74,7 +74,9 @@ async def test_create_duplicate_lead_returns_409(client: AsyncClient):
     assert res1.status_code == 201
 
     # Duplicate attempt with leading @
-    res2 = await client.post("/api/v1/outreach/leads", json={"platform": "twitter", "handle": "@unique_influencer"})
+    res2 = await client.post(
+        "/api/v1/outreach/leads", json={"platform": "twitter", "handle": "@unique_influencer"}
+    )
     assert res2.status_code == 409
     assert res2.json()["error"] == "CONFLICT"
 
@@ -172,7 +174,10 @@ async def test_stage_and_review_message_flow(client: AsyncClient):
     assert review_res.status_code == 200
     reviewed_data = review_res.json()
     assert reviewed_data["status"] == "approved"
-    assert reviewed_data["content"] == "Hey, loved your latest post on growth engineering! Have a quick question."
+    assert (
+        reviewed_data["content"]
+        == "Hey, loved your latest post on growth engineering! Have a quick question."
+    )
     assert reviewed_data["reviewed_at"] is not None
 
 
@@ -215,13 +220,15 @@ async def test_scout_creators_api_endpoint(client: AsyncClient):
     account_id = await _create_account_via_api(client, "scout_tester_bot")
 
     mock_scout_json = (
-        '[\n'
+        "[\n"
         '  {"handle": "indie_founder_1", "display_name": "Indie Founder", "bio": "Building SaaS", "follower_count": 18000, "reason": "SaaS founder"},\n'
         '  {"handle": "devtool_creator", "display_name": "Dev Creator", "bio": "Dev tools reviewer", "follower_count": 32000, "reason": "High engagement"}\n'
-        ']'
+        "]"
     )
 
-    with patch("app.modules.outreach.router.scout_influencer_leads", new_callable=AsyncMock) as mock_scout:
+    with patch(
+        "app.modules.outreach.router.scout_influencer_leads", new_callable=AsyncMock
+    ) as mock_scout:
         mock_scout.return_value = mock_scout_json
 
         res = await client.post(
@@ -255,7 +262,9 @@ async def test_sweep_inbox_api_endpoint(client: AsyncClient):
 
     mock_summary = "Checked inbox: Found 1 unread reply from @billgates saying 'Sounds interesting, tell me more.'"
 
-    with patch("app.modules.outreach.router.read_and_summarize_inbox", new_callable=AsyncMock) as mock_inbox:
+    with patch(
+        "app.modules.outreach.router.read_and_summarize_inbox", new_callable=AsyncMock
+    ) as mock_inbox:
         mock_inbox.return_value = mock_summary
 
         res = await client.post(f"/api/v1/outreach/sweep-inbox?account_id={account_id}")

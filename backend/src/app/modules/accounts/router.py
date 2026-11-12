@@ -116,6 +116,7 @@ async def verify_browser_session(
 
     if not storage_path.exists():
         from app.common.exceptions import AppError
+
         raise AppError("No session cookies were saved. Please try logging in again.")
 
     # Mark authenticated in PostgreSQL

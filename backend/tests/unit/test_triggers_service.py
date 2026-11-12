@@ -90,7 +90,9 @@ async def test_list_watched_handles_active_filter(db_session: AsyncSession):
     h2 = await service.add_watched_handle(
         AddWatchedHandleCommand(platform=PlatformType.TWITTER, handle="inactive_brand")
     )
-    await service.update_watched_handle(UpdateWatchedHandleCommand(handle_id=h2.id, is_active=False))
+    await service.update_watched_handle(
+        UpdateWatchedHandleCommand(handle_id=h2.id, is_active=False)
+    )
 
     all_handles = await service.list_watched_handles(active_only=False)
     active_handles = await service.list_watched_handles(active_only=True)
@@ -223,9 +225,7 @@ async def test_update_rule_with_nonexistent_account_raises(db_session: AsyncSess
     )
 
     with pytest.raises(AccountNotFoundError):
-        await service.update_rule(
-            UpdateTriggerRuleCommand(rule_id=rule.id, account_id=uuid4())
-        )
+        await service.update_rule(UpdateTriggerRuleCommand(rule_id=rule.id, account_id=uuid4()))
 
 
 @pytest.mark.anyio

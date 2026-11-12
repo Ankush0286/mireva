@@ -23,10 +23,7 @@ class ConnectedAccount(AuditBase):
         nullable=False,
         index=True,
     )
-    display_name: Mapped[str | None] = mapped_column(
-        String(150), 
-        nullable=True
-    )
+    display_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
     platform_user_id: Mapped[str | None] = mapped_column(
         String(100),
         nullable=True,
@@ -45,34 +42,15 @@ class ConnectedAccount(AuditBase):
         default=AuthMethod.HYBRID,
         nullable=False,
     )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, 
-        default=True, 
-        nullable=False
-    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # --------------- Encrypted API Credential Vault ---------------
     # Encrypted via Fernet AES-128 before storage; decrypted only in-memory.
-    encrypted_access_token: Mapped[str | None] = mapped_column(
-        Text, 
-        nullable=True
-    )
-    encrypted_refresh_token: Mapped[str | None] = mapped_column(
-        Text, 
-        nullable=True
-    )
-    encrypted_token_secret: Mapped[str | None] = mapped_column(
-        Text, 
-        nullable=True
-    )
-    encrypted_api_key: Mapped[str | None] = mapped_column(
-        Text, 
-        nullable=True
-    )
-    encrypted_api_secret: Mapped[str | None] = mapped_column(
-        Text, 
-        nullable=True
-    )
+    encrypted_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_token_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_api_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
@@ -80,42 +58,19 @@ class ConnectedAccount(AuditBase):
 
     # --------------- Browser Session Persistence ---------------
     # Path inside storage/browser_sessions/ holding saved Playwright cookies
-    browser_storage_path: Mapped[str | None] = mapped_column(
-        String(255), 
-        nullable=True
-    )
-    has_valid_browser_session: Mapped[bool] = mapped_column(
-        Boolean, 
-        default=False, 
-        nullable=False
-    )
+    browser_storage_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    has_valid_browser_session: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_browser_login_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
 
     # --------------- Anti-Ban Throttling & Daily Quotas ---------------
-    daily_post_limit: Mapped[int] = mapped_column(
-        Integer, 
-        default=10, 
-        nullable=False
-    )
-    daily_posts_sent: Mapped[int] = mapped_column(
-        Integer, 
-        default=0, 
-        nullable=False
-    )
+    daily_post_limit: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    daily_posts_sent: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
-    daily_dm_limit: Mapped[int] = mapped_column(
-        Integer, 
-        default=15, 
-        nullable=False
-    )
-    daily_dms_sent: Mapped[int] = mapped_column(
-        Integer, 
-        default=0, 
-        nullable=False
-    )
+    daily_dm_limit: Mapped[int] = mapped_column(Integer, default=15, nullable=False)
+    daily_dms_sent: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # Tracks when the 24-hour quota counter was last reset
     daily_counters_reset_at: Mapped[datetime] = mapped_column(
@@ -134,18 +89,9 @@ class ConnectedAccount(AuditBase):
     )
 
     # --------------- Metadata & Diagnostics ---------------
-    follower_count: Mapped[int | None] = mapped_column(
-        Integer, 
-        nullable=True
-    )
-    profile_image_url: Mapped[str | None] = mapped_column(
-        String(500), 
-        nullable=True
-    )
-    last_error_message: Mapped[str | None] = mapped_column(
-        Text, 
-        nullable=True
-    )
+    follower_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    profile_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     extra_metadata: Mapped[dict[str, Any]] = mapped_column(
         JSON,
         default=dict,

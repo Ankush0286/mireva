@@ -21,9 +21,7 @@ class ModelConfig:
 class AgentSettings:
     """Runtime configuration for LLM orchestration and Pydantic AI."""
 
-    DEFAULT_MODEL: str = os.getenv(
-        "AGENT_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free"
-    )
+    DEFAULT_MODEL: str = os.getenv("AGENT_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
     REASONING_MODEL: str = os.getenv(
         "AGENT_REASONING_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free"
     )
@@ -73,9 +71,7 @@ class AgentSettings:
 
 agent_settings = AgentSettings()
 
-MODEL_REGISTRY: dict[str, ModelConfig] = {
-    m.id: m for m in agent_settings.AVAILABLE_MODELS
-}
+MODEL_REGISTRY: dict[str, ModelConfig] = {m.id: m for m in agent_settings.AVAILABLE_MODELS}
 
 
 def calculate_usage_metrics(
@@ -87,10 +83,9 @@ def calculate_usage_metrics(
     target_id = (model_id or agent_settings.DEFAULT_MODEL).strip()
     config = MODEL_REGISTRY.get(target_id) or MODEL_REGISTRY[agent_settings.DEFAULT_MODEL]
 
-    cost_usd = (
-        (prompt_tokens / 1_000_000) * config.input_cost_per_1m
-        + (completion_tokens / 1_000_000) * config.output_cost_per_1m
-    )
+    cost_usd = (prompt_tokens / 1_000_000) * config.input_cost_per_1m + (
+        completion_tokens / 1_000_000
+    ) * config.output_cost_per_1m
 
     return {
         "promptTokens": prompt_tokens,

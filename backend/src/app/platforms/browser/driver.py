@@ -135,7 +135,9 @@ async def create_stealth_context(
         **kwargs,
     }
 
-    logger.debug("Launching stealth persistent context at %s (headless=%s)", user_data_path, headless)
+    logger.debug(
+        "Launching stealth persistent context at %s (headless=%s)", user_data_path, headless
+    )
     context = await playwright.chromium.launch_persistent_context(**context_kwargs)
 
     # Restore cookies from storage_state.json if present

@@ -99,16 +99,18 @@ class AhrefsProvider(BaseConnectorProvider):
             if volume >= min_impressions and 3.0 <= position <= 25.0:
                 score = round(min(100.0, (volume / 50.0) * (26.0 - position) / 5.0), 1)
 
-                opportunities.append({
-                    "query": keyword_text,
-                    "page_url": None,
-                    "impressions": volume,
-                    "clicks": int(kw.get("sum_traffic", 0)),
-                    "ctr": None,
-                    "position": position,
-                    "opportunity_type": "keyword_gap",
-                    "score": score,
-                })
+                opportunities.append(
+                    {
+                        "query": keyword_text,
+                        "page_url": None,
+                        "impressions": volume,
+                        "clicks": int(kw.get("sum_traffic", 0)),
+                        "ctr": None,
+                        "position": position,
+                        "opportunity_type": "keyword_gap",
+                        "score": score,
+                    }
+                )
 
         opportunities.sort(key=lambda x: x["score"], reverse=True)
         return opportunities[:limit]

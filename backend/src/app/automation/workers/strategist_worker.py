@@ -65,9 +65,7 @@ async def _build_review_digest(db: AsyncSession) -> str:
     approved_dms = [
         f"@{d.lead.handle}"
         for d in recent_dms
-        if d.lead
-        and d.status
-        in (OutreachMessageStatus.APPROVED, OutreachMessageStatus.DISPATCHED)
+        if d.lead and d.status in (OutreachMessageStatus.APPROVED, OutreachMessageStatus.DISPATCHED)
     ]
     rejected_dms = [
         f"@{d.lead.handle} (Reason: {d.last_error_message or 'Dismissed by operator'})"
@@ -86,9 +84,7 @@ async def _build_review_digest(db: AsyncSession) -> str:
         if m.status in (TriggerMatchStatus.APPROVED, TriggerMatchStatus.DISPATCHED)
     ]
     ignored_matches = [
-        f"@{m.author_handle}"
-        for m in recent_matches
-        if m.status == TriggerMatchStatus.IGNORED
+        f"@{m.author_handle}" for m in recent_matches if m.status == TriggerMatchStatus.IGNORED
     ]
     pending_matches = [
         f"@{m.author_handle}"
@@ -144,9 +140,7 @@ async def execute_autonomous_cycle(
     logger.info("🧠 Autonomous Strategist waking up for cycle execution...")
 
     active_state.status = StrategistStatus.RUNNING
-    active_state.current_step = (
-        "Waking up: evaluating marketing telemetry & review outcomes..."
-    )
+    active_state.current_step = "Waking up: evaluating marketing telemetry & review outcomes..."
     active_state.last_cycle_started_at = datetime.now(UTC)
     await db.commit()
 
@@ -179,9 +173,7 @@ async def execute_autonomous_cycle(
         await service._sync_cycle_count(active_state)
 
         if active_state.status == StrategistStatus.PAUSED:
-            logger.info(
-                "⏸️ Cycle finished, keeping operator PAUSED state."
-            )
+            logger.info("⏸️ Cycle finished, keeping operator PAUSED state.")
             return False
 
         if active_state.status == StrategistStatus.RUNNING:

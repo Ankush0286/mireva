@@ -110,4 +110,3 @@ async def delete_recipe(
     service: RecipeService = Depends(get_recipe_service),
 ) -> None:
     await service.delete_recipe(recipe_id)
-

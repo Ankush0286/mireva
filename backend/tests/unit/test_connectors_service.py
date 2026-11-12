@@ -84,7 +84,9 @@ async def test_get_by_type_and_target(db_session: AsyncSession):
     )
     created = await service.create_connector(cmd)
 
-    found = await service.get_by_type_and_target(ConnectorType.GOOGLE_SEARCH_CONSOLE, "https://target.site")
+    found = await service.get_by_type_and_target(
+        ConnectorType.GOOGLE_SEARCH_CONSOLE, "https://target.site"
+    )
     assert found is not None
     assert found.id == created.id
 
@@ -166,7 +168,9 @@ async def test_list_connectors_with_filters(db_session: AsyncSession):
 
     all_connectors = await service.list_connectors(active_only=False)
     active_connectors = await service.list_connectors(active_only=True)
-    gsc_connectors = await service.list_connectors(connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE)
+    gsc_connectors = await service.list_connectors(
+        connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE
+    )
 
     assert len(all_connectors) == 2
     assert len(active_connectors) == 1
@@ -291,7 +295,9 @@ async def test_fetch_opportunities_on_paused_connector_raises(db_session: AsyncS
             api_key="ahrefs_key",
         )
     )
-    await service.update_connector(UpdateConnectorCommand(connector_id=connector.id, is_active=False))
+    await service.update_connector(
+        UpdateConnectorCommand(connector_id=connector.id, is_active=False)
+    )
 
     with pytest.raises(InvalidConnectorConfigError):
         await service.fetch_opportunities(connector.id)

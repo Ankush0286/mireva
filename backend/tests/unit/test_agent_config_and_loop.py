@@ -42,9 +42,7 @@ def test_calculate_usage_metrics_free_and_paid_models() -> None:
 
 def test_extract_run_usage_from_pydantic_ai_property() -> None:
     usage = RunUsage(input_tokens=1200, output_tokens=300)
-    metrics = _extract_run_usage(
-        usage, "accounts/fireworks/models/deepseek-v4p1-flash-1017"
-    )
+    metrics = _extract_run_usage(usage, "accounts/fireworks/models/deepseek-v4p1-flash-1017")
     assert metrics["promptTokens"] == 1200
     assert metrics["completionTokens"] == 300
     assert metrics["totalTokens"] == 1500
@@ -55,9 +53,7 @@ def test_extract_run_usage_from_pydantic_ai_property() -> None:
 
 def test_normalize_tool_args_unwraps_nested_json_strings() -> None:
     # 1. Nested 'arguments' JSON string
-    nested = {
-        "arguments": '{"action_type": "outreach_dm", "title": "Send DM to @zuck?"}'
-    }
+    nested = {"arguments": '{"action_type": "outreach_dm", "title": "Send DM to @zuck?"}'}
     assert _normalize_tool_args(nested) == {
         "action_type": "outreach_dm",
         "title": "Send DM to @zuck?",

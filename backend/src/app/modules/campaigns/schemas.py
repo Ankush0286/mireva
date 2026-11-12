@@ -22,7 +22,9 @@ class CampaignCreateRequest(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=150, examples=["Q4 AI Tool Launch"])
     description: str | None = Field(None, max_length=2000)
-    target_audience: str | None = Field(None, max_length=255, examples=["Tech Founders, Solo Hackers"])
+    target_audience: str | None = Field(
+        None, max_length=255, examples=["Tech Founders, Solo Hackers"]
+    )
     status: CampaignStatus = Field(default=CampaignStatus.DRAFT)
     start_date: datetime | None = None
     end_date: datetime | None = None
@@ -68,7 +70,9 @@ class PostQueueRequest(BaseModel):
     """Payload accepted by POST /api/v1/campaigns/{campaign_id}/posts/"""
 
     account_id: UUID = Field(..., description="Target ConnectedAccount ID")
-    content: str = Field(..., min_length=1, max_length=10000, description="Post text or thread copy")
+    content: str = Field(
+        ..., min_length=1, max_length=10000, description="Post text or thread copy"
+    )
     content_type: PostContentType = Field(default=PostContentType.TEXT)
     media_urls: list[str] = Field(default_factory=list, max_length=10)
     scheduled_at: datetime | None = Field(

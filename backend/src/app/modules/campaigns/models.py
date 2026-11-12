@@ -178,9 +178,7 @@ class ScheduledPost(AuditBase):
 
     # Optimized index for the background post dispatcher query:
     # SELECT * FROM scheduled_posts WHERE status = 'scheduled' AND scheduled_at <= :now
-    __table_args__ = (
-        Index("ix_scheduled_posts_status_scheduled_at", "status", "scheduled_at"),
-    )
+    __table_args__ = (Index("ix_scheduled_posts_status_scheduled_at", "status", "scheduled_at"),)
 
     # --------------- State Transition Helpers ---------------
     def is_due(self) -> bool:

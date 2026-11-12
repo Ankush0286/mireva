@@ -43,11 +43,15 @@ async def create_connector(
     summary="List all registered data source connectors",
 )
 async def list_connectors(
-    connector_type: ConnectorType | None = Query(default=None, description="Filter by provider type"),
+    connector_type: ConnectorType | None = Query(
+        default=None, description="Filter by provider type"
+    ),
     active_only: bool = Query(default=False, description="Filter active sources only"),
     service: ConnectorService = Depends(get_connector_service),
 ) -> list[ConnectorResponse]:
-    connectors = await service.list_connectors(connector_type=connector_type, active_only=active_only)
+    connectors = await service.list_connectors(
+        connector_type=connector_type, active_only=active_only
+    )
     return [ConnectorResponse.model_validate(c) for c in connectors]
 
 

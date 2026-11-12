@@ -10,6 +10,7 @@ from app.core.config import settings
 class EncryptionError(Exception):
     """Raised when encryption or decryption fails."""
 
+
 @lru_cache
 def _get_fernet_cipher() -> Fernet:
     """

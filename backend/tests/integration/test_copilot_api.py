@@ -136,7 +136,6 @@ async def test_add_message_invalid_payload_returns_422(client: AsyncClient):
     assert res.json()["error"] == "VALIDATION_ERROR"
 
 
-
 @pytest.mark.anyio
 async def test_delete_messages_from_api(client: AsyncClient) -> None:
     session_res = await client.post(
@@ -155,9 +154,7 @@ async def test_delete_messages_from_api(client: AsyncClient) -> None:
     )
     m2_id = m2_res.json()["id"]
 
-    del_res = await client.delete(
-        f"/api/v1/copilot/sessions/{session_id}/messages/{m2_id}"
-    )
+    del_res = await client.delete(f"/api/v1/copilot/sessions/{session_id}/messages/{m2_id}")
     assert del_res.status_code == 204
 
     list_res = await client.get(f"/api/v1/copilot/sessions/{session_id}/messages")

@@ -32,9 +32,7 @@ class ConnectorAuthFailedError(AuthenticationFailedError):
     """Raised when an external API rejects authentication tokens or API keys."""
 
     def __init__(self, connector_name: str, detail: str = "Invalid credentials"):
-        super().__init__(
-            f"Authentication failed for data connector '{connector_name}': {detail}"
-        )
+        super().__init__(f"Authentication failed for data connector '{connector_name}': {detail}")
         self.connector_name = connector_name
 
 

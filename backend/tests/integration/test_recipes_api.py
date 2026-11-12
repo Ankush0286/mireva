@@ -11,7 +11,11 @@ async def test_recipe_api_lifecycle(client: AsyncClient):
         "platform": "instagram",
         "description": "Story publish workflow",
         "steps": [
-            {"type": "click", "description": "Click Story Icon", "selectors": ["[aria-label='Story']"]}
+            {
+                "type": "click",
+                "description": "Click Story Icon",
+                "selectors": ["[aria-label='Story']"],
+            }
         ],
         "is_default": True,
     }
@@ -100,4 +104,3 @@ async def test_create_recipe_empty_name_returns_422(client: AsyncClient):
     )
     assert res.status_code == 422
     assert res.json()["error"] == "VALIDATION_ERROR"
-

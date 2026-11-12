@@ -68,7 +68,9 @@ class TriggerRuleCreateRequest(BaseModel):
     watched_handle_id: UUID | None = Field(None, description="Optional target handle to scope rule")
     action_type: TriggerActionType = Field(default=TriggerActionType.STAGE_DRAFT)
 
-    keywords_any: list[str] = Field(default_factory=list, examples=[["expensive", "pricing", "alternative", "#saas"]])
+    keywords_any: list[str] = Field(
+        default_factory=list, examples=[["expensive", "pricing", "alternative", "#saas"]]
+    )
     keywords_all: list[str] = Field(default_factory=list, examples=[["looking", "tool"]])
     keywords_exclude: list[str] = Field(default_factory=list, examples=[["hiring", "job"]])
 
@@ -86,7 +88,9 @@ class TriggerRuleCreateRequest(BaseModel):
         has_any = any(k.strip() for k in self.keywords_any)
         has_all = any(k.strip() for k in self.keywords_all)
         if not has_any and not has_all:
-            raise ValueError("At least one non-empty keyword in keywords_any or keywords_all must be defined")
+            raise ValueError(
+                "At least one non-empty keyword in keywords_any or keywords_all must be defined"
+            )
         return self
 
     def to_command(self) -> CreateTriggerRuleCommand:

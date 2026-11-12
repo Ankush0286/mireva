@@ -41,7 +41,5 @@ class PostAlreadyPublishedError(ConflictError):
     """Raised when attempting to modify, reschedule, or delete an already published post."""
 
     def __init__(self, post_id: UUID | str):
-        super().__init__(
-            f"Post '{post_id}' has already been published and cannot be modified."
-        )
+        super().__init__(f"Post '{post_id}' has already been published and cannot be modified.")
         self.post_id = post_id

@@ -50,8 +50,9 @@ async def test_adapter_auth_fails_cleanly(tmp_path: Path):
 
     # Mocking internal decrypt to return None
     import app.platforms.instagram.adapter as ig_mod
+
     original_decrypt = ig_mod.decrypt_token
-    ig_mod.decrypt_token = lambda x: None # type: ignore[assignment]
+    ig_mod.decrypt_token = lambda x: None  # type: ignore[assignment]
 
     try:
         # File exists so validation passes

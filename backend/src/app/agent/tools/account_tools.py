@@ -62,8 +62,12 @@ async def check_account_health(
                 "can_post_today": account.can_post_today(),
                 "can_send_dm_today": account.can_send_dm_today(),
                 "is_in_cooldown": account.is_in_cooldown(),
-                "cooldown_until": account.cooldown_until.isoformat() if account.cooldown_until else None,
-                "remaining_posts_today": max(0, account.daily_post_limit - account.daily_posts_sent),
+                "cooldown_until": account.cooldown_until.isoformat()
+                if account.cooldown_until
+                else None,
+                "remaining_posts_today": max(
+                    0, account.daily_post_limit - account.daily_posts_sent
+                ),
                 "remaining_dms_today": max(0, account.daily_dm_limit - account.daily_dms_sent),
             }
     except (AppError, ValueError) as exc:

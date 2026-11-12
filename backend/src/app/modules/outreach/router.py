@@ -225,7 +225,9 @@ async def stage_message(
 async def list_messages(
     lead_id: UUID | None = Query(default=None, description="Filter by lead ID"),
     campaign_id: UUID | None = Query(default=None, description="Filter by campaign ID"),
-    status: OutreachMessageStatus | None = Query(default=None, description="Filter by message review status"),
+    status: OutreachMessageStatus | None = Query(
+        default=None, description="Filter by message review status"
+    ),
     limit: int = Query(default=50, ge=1, le=200),
     service: OutreachService = Depends(get_outreach_service),
 ) -> list[OutreachMessageResponse]:
@@ -338,7 +340,9 @@ async def scout_creators_endpoint(
                             display_name=item.get("display_name"),
                             bio=item.get("bio"),
                             follower_count=item.get("follower_count"),
-                            tier=LeadTier.MICRO if (item.get("follower_count") or 0) > 10000 else LeadTier.NANO,
+                            tier=LeadTier.MICRO
+                            if (item.get("follower_count") or 0) > 10000
+                            else LeadTier.NANO,
                             tags=[payload.niche_or_query.lstrip("#")],
                             notes=f"AI Scout fit: {item.get('reason', 'N/A')}",
                         )

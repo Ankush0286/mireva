@@ -113,11 +113,17 @@ class ConnectorService:
         if cmd.api_key is not None:
             connector.encrypted_api_key = encrypt_token(cmd.api_key) if cmd.api_key else None
         if cmd.access_token is not None:
-            connector.encrypted_access_token = encrypt_token(cmd.access_token) if cmd.access_token else None
+            connector.encrypted_access_token = (
+                encrypt_token(cmd.access_token) if cmd.access_token else None
+            )
         if cmd.refresh_token is not None:
-            connector.encrypted_refresh_token = encrypt_token(cmd.refresh_token) if cmd.refresh_token else None
+            connector.encrypted_refresh_token = (
+                encrypt_token(cmd.refresh_token) if cmd.refresh_token else None
+            )
         if cmd.client_secret is not None:
-            connector.encrypted_client_secret = encrypt_token(cmd.client_secret) if cmd.client_secret else None
+            connector.encrypted_client_secret = (
+                encrypt_token(cmd.client_secret) if cmd.client_secret else None
+            )
 
         await self.db.commit()
         await self.db.refresh(connector)
@@ -149,7 +155,9 @@ class ConnectorService:
             if is_valid:
                 connector.mark_synced()
             else:
-                connector.mark_error("Credentials rejected by external service.", is_auth_error=True)
+                connector.mark_error(
+                    "Credentials rejected by external service.", is_auth_error=True
+                )
             await self.db.commit()
             return is_valid
         except Exception as exc:

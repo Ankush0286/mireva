@@ -1,4 +1,3 @@
-
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +20,7 @@ async def _create_account_via_api(client: AsyncClient, handle: str = "api_trigge
 # =============================================================================
 # Watched Handles API Integration Tests
 # =============================================================================
+
 
 @pytest.mark.anyio
 async def test_watched_handle_api_lifecycle(client: AsyncClient):
@@ -53,7 +53,10 @@ async def test_watched_handle_api_lifecycle(client: AsyncClient):
     # 4. Patch (testing safe frequency update)
     patch_res = await client.patch(
         f"/api/v1/triggers/handles/{handle_id}",
-        json={"display_name": "Updated Founder", "scrape_frequency_minutes": 240},  # Updated from 45 to >= 60m
+        json={
+            "display_name": "Updated Founder",
+            "scrape_frequency_minutes": 240,
+        },  # Updated from 45 to >= 60m
     )
     assert patch_res.status_code == 200
     assert patch_res.json()["display_name"] == "Updated Founder"
@@ -77,6 +80,7 @@ async def test_watched_handle_api_lifecycle(client: AsyncClient):
     )
     assert unsafe_res.status_code == 422
 
+
 @pytest.mark.anyio
 async def test_create_duplicate_watched_handle_returns_409(client: AsyncClient):
     payload = {"platform": "twitter", "handle": "unique_brand"}
@@ -84,7 +88,9 @@ async def test_create_duplicate_watched_handle_returns_409(client: AsyncClient):
     assert res1.status_code == 201
 
     # Duplicate attempt with leading @
-    res2 = await client.post("/api/v1/triggers/handles", json={"platform": "twitter", "handle": "@unique_brand"})
+    res2 = await client.post(
+        "/api/v1/triggers/handles", json={"platform": "twitter", "handle": "@unique_brand"}
+    )
     assert res2.status_code == 409
     assert res2.json()["error"] == "CONFLICT"
 
@@ -214,7 +220,10 @@ async def test_list_and_review_matches_api(client: AsyncClient, db_session: Asyn
     )
     assert review_res.status_code == 200
     assert review_res.json()["status"] == "approved"
-    assert review_res.json()["generated_response"] == "Hey @prospective_buyer, check our top-rated platform!"
+    assert (
+        review_res.json()["generated_response"]
+        == "Hey @prospective_buyer, check our top-rated platform!"
+    )
 
 
 @pytest.mark.anyio

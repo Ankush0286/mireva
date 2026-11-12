@@ -73,7 +73,9 @@ class TriggerService:
         clean_handle = cmd.handle.lstrip("@").strip()
         existing = await self.get_watched_handle_by_platform_and_handle(cmd.platform, clean_handle)
         if existing:
-            platform_str = cmd.platform.value if hasattr(cmd.platform, "value") else str(cmd.platform)
+            platform_str = (
+                cmd.platform.value if hasattr(cmd.platform, "value") else str(cmd.platform)
+            )
             raise WatchedHandleAlreadyExistsError(platform=platform_str, handle=clean_handle)
 
         watched = WatchedHandle(
@@ -162,7 +164,9 @@ class TriggerService:
         clean_exclude = [k.lower().strip() for k in cmd.keywords_exclude if k.strip()]
 
         if not clean_any and not clean_all:
-            raise InvalidTriggerRuleError("Rule requires at least one keyword in keywords_any or keywords_all.")
+            raise InvalidTriggerRuleError(
+                "Rule requires at least one keyword in keywords_any or keywords_all."
+            )
 
         rule = TriggerRule(
             name=cmd.name,

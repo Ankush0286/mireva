@@ -53,16 +53,14 @@ def resolve_model(model_name: str | None = None) -> Model:
 
     if config.provider == "fireworks":
         api_key = (
-            settings.FIREWORKS_API_KEY.get_secret_value().strip()
-            or "fw-placeholder-for-tests"
+            settings.FIREWORKS_API_KEY.get_secret_value().strip() or "fw-placeholder-for-tests"
         )
         provider_fw = FireworksProvider(api_key=api_key)
         return OpenAIChatModel(config.id, provider=provider_fw)
 
     # Provider is "openrouter"
     api_key_or = (
-        settings.OPENROUTER_API_KEY.get_secret_value().strip()
-        or "sk-or-placeholder-for-tests"
+        settings.OPENROUTER_API_KEY.get_secret_value().strip() or "sk-or-placeholder-for-tests"
     )
     provider_or = OpenRouterProvider(api_key=api_key_or)
     return OpenRouterModel(config.id, provider=provider_or)

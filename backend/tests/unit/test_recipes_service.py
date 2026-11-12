@@ -20,7 +20,11 @@ async def test_create_and_get_recipe(db_session: AsyncSession):
         platform=PlatformType.INSTAGRAM,
         description="Standard single-photo feed posting recipe",
         steps=[
-            {"type": "click", "description": "Click Create", "selectors": ["[aria-label='Create']"]},
+            {
+                "type": "click",
+                "description": "Click Create",
+                "selectors": ["[aria-label='Create']"],
+            },
             {"type": "upload", "description": "Upload file", "target": "input[type='file']"},
         ],
         is_default=True,
@@ -139,8 +143,12 @@ async def test_get_default_recipe_returns_none_when_no_default(db_session: Async
 @pytest.mark.anyio
 async def test_list_recipes_with_filters(db_session: AsyncSession):
     service = RecipeService(db_session)
-    await service.create_recipe(CreateRecipeCommand(name="IG Post", platform=PlatformType.INSTAGRAM))
-    await service.create_recipe(CreateRecipeCommand(name="IG Reel", platform=PlatformType.INSTAGRAM))
+    await service.create_recipe(
+        CreateRecipeCommand(name="IG Post", platform=PlatformType.INSTAGRAM)
+    )
+    await service.create_recipe(
+        CreateRecipeCommand(name="IG Reel", platform=PlatformType.INSTAGRAM)
+    )
     await service.create_recipe(CreateRecipeCommand(name="X Post", platform=PlatformType.TWITTER))
 
     # Filter by platform
@@ -180,8 +188,12 @@ async def test_update_and_delete_recipe(db_session: AsyncSession):
 @pytest.mark.anyio
 async def test_update_recipe_rename_conflict_raises(db_session: AsyncSession):
     service = RecipeService(db_session)
-    await service.create_recipe(CreateRecipeCommand(name="Existing Name", platform=PlatformType.TWITTER))
-    r2 = await service.create_recipe(CreateRecipeCommand(name="Original Name", platform=PlatformType.TWITTER))
+    await service.create_recipe(
+        CreateRecipeCommand(name="Existing Name", platform=PlatformType.TWITTER)
+    )
+    r2 = await service.create_recipe(
+        CreateRecipeCommand(name="Original Name", platform=PlatformType.TWITTER)
+    )
 
     with pytest.raises(RecipeAlreadyExistsError):
         await service.update_recipe(UpdateRecipeCommand(recipe_id=r2.id, name="Existing Name"))

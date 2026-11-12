@@ -49,7 +49,8 @@ async def run_watcher_worker(db: AsyncSession | None = None) -> int:
 
             # Find active account to act as scraper
             scraper_accounts = [
-                acc for acc in all_accounts
+                acc
+                for acc in all_accounts
                 if acc.platform == handle.platform and acc.status.value == "active"
             ]
             if not scraper_accounts:

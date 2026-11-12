@@ -210,6 +210,7 @@ async def test_trigger_tools_execution_and_error_handling(db_session: AsyncSessi
 # Outreach & Full-Auto / Staged-Review Tools Unit Tests
 # =============================================================================
 
+
 @pytest.mark.anyio
 async def test_outreach_tools_and_autonomy_modes(db_session: AsyncSession) -> None:
     ctx = _make_run_context(db_session)
@@ -324,6 +325,7 @@ async def test_outreach_tools_and_autonomy_modes(db_session: AsyncSession) -> No
     assert len(outcomes["rejected_dms_by_human"]) == 1
     assert outcomes["rejected_dms_by_human"][0]["lead_handle"] == "rejected_lead"
     assert outcomes["rejected_dms_by_human"][0]["reason"] == "Too generic"
+
 
 # =============================================================================
 # Autonomous Sleep & Human Help Tools Unit Tests

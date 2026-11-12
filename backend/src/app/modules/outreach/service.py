@@ -94,7 +94,9 @@ class OutreachService:
         clean_handle = cmd.handle.lstrip("@").strip()
         existing = await self.get_lead_by_platform_and_handle(cmd.platform, clean_handle)
         if existing:
-            platform_str = cmd.platform.value if hasattr(cmd.platform, "value") else str(cmd.platform)
+            platform_str = (
+                cmd.platform.value if hasattr(cmd.platform, "value") else str(cmd.platform)
+            )
             raise LeadAlreadyExistsError(platform=platform_str, handle=clean_handle)
 
         lead = Lead(

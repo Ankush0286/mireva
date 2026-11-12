@@ -53,7 +53,9 @@ async def get_search_console_opportunities(
             )
 
             if not connectors:
-                return [{"warning": "No active Google Search Console connector found in workspace."}]
+                return [
+                    {"warning": "No active Google Search Console connector found in workspace."}
+                ]
 
             target_connector = connectors[0]
             if site_url:
@@ -97,7 +99,9 @@ async def get_competitor_keyword_gaps(
                 )
 
             if not connectors:
-                return [{"warning": "No active Ahrefs or DataForSEO connector configured in workspace."}]
+                return [
+                    {"warning": "No active Ahrefs or DataForSEO connector configured in workspace."}
+                ]
 
             target_connector = connectors[0]
             if competitor_domain:
