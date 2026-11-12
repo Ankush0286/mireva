@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -47,17 +47,17 @@ async def test_adapter_auth_fails_cleanly(tmp_path: Path):
         session_manager=BrowserSessionManager(base_dir=tmp_path),
     )
 
-    # Mock _get_or_create_page and authenticate to simulate failed auth without hitting external servers
-    mock_page = AsyncMock()
-    adapter._get_or_create_page = AsyncMock(return_value=mock_page)
-    adapter.authenticate = AsyncMock(return_value=False)
-
     fake_file = tmp_path / "valid.jpg"
     fake_file.write_bytes(b"dummy")
 
     try:
-        with pytest.raises(InstagramAutomationError, match="Failed to authenticate session"):
-            await adapter.publish_post("Caption", media_paths=[str(fake_file)])
+        with (
+            patch.object(adapter, "_get_or_create_page", new_callable=AsyncMock),
+            patch.object(adapter, "authenticate", new_callable=AsyncMock) as mock_auth,
+        ):
+            mock_auth.return_value = False
+            with pytest.raises(InstagramAutomationError, match="Failed to authenticate session"):
+                await adapter.publish_post("Caption", media_paths=[str(fake_file)])
     finally:
         await adapter.close()
 
