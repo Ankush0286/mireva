@@ -34,7 +34,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  GATEWAY_IMAGE: ${{ github.repository }}-caddy
+  GATEWAY_IMAGE: ${{ github.repository }}-frontend
   BACKEND_IMAGE: ${{ github.repository }}-backend
   BRIDGE_IMAGE: ${{ github.repository }}-bridge
 
@@ -119,8 +119,8 @@ jobs:
           push: true
           tags: ${{ steps.meta-gateway.outputs.tags }}
           labels: ${{ steps.meta-gateway.outputs.labels }}
-          cache-from: type=gha,scope=gateway
-          cache-to: type=gha,mode=max,scope=gateway
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
 
       # ----- BACKEND (FastAPI + Playwright Chromium) -----
       - name: Extract Metadata (Backend)
