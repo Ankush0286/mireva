@@ -34,7 +34,7 @@ class ConnectorCreateRequest(BaseModel):
         min_length=1,
         max_length=255,
         description="Target site URL, property ID, or competitor domain",
-        examples=["https://growthcraft.ai", "sc-domain:growthcraft.ai", "competitor.com"],
+        examples=["https://mireva.ai", "sc-domain:mireva.ai", "competitor.com"],
     )
     sync_frequency_minutes: int = Field(
         default=360,

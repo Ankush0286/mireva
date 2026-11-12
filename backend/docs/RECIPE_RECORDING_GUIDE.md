@@ -1,4 +1,4 @@
-# GrowthCraft — Multi-Action Browser Recipe Recording Guide
+# Mireva — Multi-Action Browser Recipe Recording Guide
 
 This guide explains the exact step-by-step clicks to perform when recording default browser automation recipes across **Instagram**, **X (Twitter)**, and **Facebook**.
 
@@ -29,7 +29,7 @@ If you ever manually edit a `.json` file inside `backend/storage/recipes/`, run 
    * **Never** use the in-page Search bar to find a test user while recording, otherwise the recipe will record your specific search query instead of working universally on any lead!
 2. **Type Simple Dummy Text (`hello` or `test`):**
    * Whenever you type into a caption, comment, or DM box, the recorder automatically converts the step into a dynamic variable (`"variable": "content"`) and strips out your dummy text.
-   * During real runs, GrowthCraft automatically injects the AI-generated post copy or personalized DM into that field.
+   * During real runs, Mireva automatically injects the AI-generated post copy or personalized DM into that field.
 3. **Avoid Stray Clicks:**
    * Only click the buttons required to complete the workflow.
    * The recorder automatically merges focus clicks on textboxes into the `TYPE` step and absorbs `"Select from computer"` clicks into the `UPLOAD` step.

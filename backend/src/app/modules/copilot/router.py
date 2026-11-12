@@ -62,7 +62,7 @@ async def list_available_models() -> list[dict[str, Any]]:
     return [
         {
             "id": agent_settings.DEFAULT_MODEL,
-            "name": "GrowthCraft AI",
+            "name": "Mireva AI",
             "description": "Fast autonomous tool execution & copywriting",
             "badge": "DEFAULT",
         }

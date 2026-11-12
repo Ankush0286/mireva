@@ -198,7 +198,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </svg>
             </div>
             <span className="font-bold text-[14.5px] tracking-tight text-[#09122A]">
-              GrowthCraft
+              Mireva
             </span>
           </div>
 

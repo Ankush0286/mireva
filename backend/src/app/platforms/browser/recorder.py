@@ -177,7 +177,7 @@ RECORDER_INJECTION_JS = """
         const badge = document.getElementById('__gc_recorder_badge');
         if (!badge) return;
         window.__gc_step_count += 1;
-        badge.innerHTML = `🔴 <b>GrowthCraft Recorder</b> • <b>${window.__gc_step_count} steps</b><br/><span style="font-size:11px;opacity:0.85">Last: ${lastAction}</span>`;
+        badge.innerHTML = `🔴 <b>Mireva Recorder</b> • <b>${window.__gc_step_count} steps</b><br/><span style="font-size:11px;opacity:0.85">Last: ${lastAction}</span>`;
     };
 
     const sendStep = (step) => {
@@ -245,7 +245,7 @@ RECORDER_INJECTION_JS = """
         if (!document.body || document.getElementById('__gc_recorder_badge')) return;
         const badge = document.createElement('div');
         badge.id = '__gc_recorder_badge';
-        badge.innerHTML = '🔴 <b>GrowthCraft Recorder Active</b><br/><span style="font-size:11px;opacity:0.85">Perform workflow, then press Enter in terminal</span>';
+        badge.innerHTML = '🔴 <b>Mireva Recorder Active</b><br/><span style="font-size:11px;opacity:0.85">Perform workflow, then press Enter in terminal</span>';
         Object.assign(badge.style, {
             position: 'fixed',
             top: '14px',
@@ -281,7 +281,7 @@ RECORDER_INJECTION_JS = """
 
 def _print_banner() -> None:
     print(f"\n{BLUE}{BOLD}╔══════════════════════════════════════════════════════════════════════╗{RESET}")
-    print(f"{BLUE}{BOLD}║{RESET}  {CYAN}{BOLD} GrowthCraft Multi-Action Browser Recipe Recorder Studio{RESET}          {BLUE}{BOLD}║{RESET}")
+    print(f"{BLUE}{BOLD}║{RESET}  {CYAN}{BOLD} Mireva Multi-Action Browser Recipe Recorder Studio{RESET}          {BLUE}{BOLD}║{RESET}")
     print(f"{BLUE}{BOLD}╚══════════════════════════════════════════════════════════════════════╝{RESET}")
 
 
@@ -651,7 +651,7 @@ async def run_interactive_cli(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="GrowthCraft Multi-Action Browser Workflow Recorder")
+    parser = argparse.ArgumentParser(description="Mireva Multi-Action Browser Workflow Recorder")
     parser.add_argument(
         "--platform",
         choices=["instagram", "twitter", "facebook"],

@@ -1115,7 +1115,7 @@ export const AccountsPage: React.FC = () => {
                         type="text"
                         value={displayName}
                         onChange={(e) => setDisplayName(e.target.value)}
-                        placeholder="e.g. GrowthCraft Official"
+                        placeholder="e.g. Mireva Official"
                         className="w-full h-10 px-3.5 rounded-xl bg-[#F8FAFD] border border-[#DCE7F5] text-xs font-medium focus:border-[#0E3A75] focus:bg-white outline-none"
                       />
                     </div>

@@ -17,7 +17,7 @@ def ensure_test_image() -> Path:
         img = Image.new("RGB", (1080, 1080), color=(14, 58, 117))
         draw = ImageDraw.Draw(img)
         draw.rectangle([100, 100, 980, 980], outline=(255, 255, 255), width=8)
-        draw.text((280, 500), "GrowthCraft AI Test Post", fill=(255, 255, 255))
+        draw.text((280, 500), "Mireva AI Test Post", fill=(255, 255, 255))
         draw.text((370, 560), "Automated Recipe Replay", fill=(148, 163, 184))
         img.save(test_img)
         print(f"Generated test image: {test_img}")
@@ -35,7 +35,7 @@ async def main():
             return
 
         test_image = ensure_test_image()
-        test_caption = "Testing automated recipe replay with GrowthCraft! 🌸✨ #automation #ai"
+        test_caption = "Testing automated recipe replay with Mireva! 🌸✨ #automation #ai"
 
         print("\n=======================================================")
         print(f"🎬 TESTING RECIPE REPLAY FOR @{account.handle}")
