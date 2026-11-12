@@ -40,7 +40,6 @@ async def test_adapter_auth_fails_cleanly(tmp_path: Path):
     mock_account.id = uuid4()
     mock_account.platform = PlatformType.INSTAGRAM
     mock_account.handle = "missing_creds"
-    # Return None for decrypted password to trigger fast failure
     mock_account.encrypted_api_secret = None
 
     adapter = InstagramAdapter(
@@ -48,22 +47,18 @@ async def test_adapter_auth_fails_cleanly(tmp_path: Path):
         session_manager=BrowserSessionManager(base_dir=tmp_path),
     )
 
-    # Mocking internal decrypt to return None
-    import app.platforms.instagram.adapter as ig_mod
+    # Mock _get_or_create_page and authenticate to simulate failed auth without hitting external servers
+    mock_page = AsyncMock()
+    adapter._get_or_create_page = AsyncMock(return_value=mock_page)
+    adapter.authenticate = AsyncMock(return_value=False)
 
-    original_decrypt = ig_mod.decrypt_token
-    ig_mod.decrypt_token = lambda x: None  # type: ignore[assignment]
+    fake_file = tmp_path / "valid.jpg"
+    fake_file.write_bytes(b"dummy")
 
     try:
-        # File exists so validation passes
-        fake_file = tmp_path / "valid.jpg"
-        fake_file.write_bytes(b"dummy")
-
         with pytest.raises(InstagramAutomationError, match="Failed to authenticate session"):
-            # Will fail because there are no session cookies and no password to log in
             await adapter.publish_post("Caption", media_paths=[str(fake_file)])
     finally:
-        ig_mod.decrypt_token = original_decrypt
         await adapter.close()
 
 
@@ -87,7 +82,7 @@ async def test_adapter_close_teardown(tmp_path: Path):
     adapter._context = mock_context
     adapter._playwright = mock_playwright
 
-    # Close should cleanly teardown both
+    # Teardown should cleanly close both
     await adapter.close()
 
     mock_context.close.assert_called_once()
