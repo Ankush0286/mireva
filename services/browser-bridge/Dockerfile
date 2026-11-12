@@ -1,21 +1,29 @@
-FROM node:20-alpine AS builder
+FROM golang:1.25-bookworm AS builder
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
+COPY go.mod go.sum ./
+RUN go mod download
 
 COPY . .
-RUN npm run build
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/bin/mireva-bridge ./cmd/server
 
-FROM caddy:2-alpine AS runner
+FROM debian:bookworm-slim AS runner
 
-# Copy compiled static assets to Caddy's default webroot
-COPY --from=builder /app/dist /srv
+WORKDIR /app
 
-# Copy the unified Caddyfile from the repo root
-COPY ../Caddyfile /etc/caddy/Caddyfile
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-EXPOSE 80 443 443/udp
+COPY --from=builder /app/bin/mireva-bridge /app/mireva-bridge
 
-CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+EXPOSE 8080
+
+ENV BRIDGE_PORT="8080" \
+    GIN_MODE="release" \
+    BRIDGE_HEADLESS="true"
+
+CMD ["/app/mireva-bridge"]

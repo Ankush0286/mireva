@@ -1,8 +1,8 @@
 services:
   caddy:
     build:
-      context: .
-      dockerfile: ./frontend/Dockerfile
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: mireva-caddy
     restart: unless-stopped
     ports:

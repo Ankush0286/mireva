@@ -10,7 +10,7 @@ on:
       - "Caddyfile"
       - "docker-compose.yml"
       - ".github/workflows/cd.yml"
-  
+
   # Allows triggering a manual release bump from the GitHub Actions UI
   workflow_dispatch:
     inputs:
@@ -29,8 +29,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write 
-  packages: write 
+  contents: write
+  packages: write
 
 env:
   REGISTRY: ghcr.io
@@ -114,7 +114,7 @@ jobs:
       - name: Build & Push Gateway Container
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./frontend
           file: ./frontend/Dockerfile
           push: true
           tags: ${{ steps.meta-gateway.outputs.tags }}

@@ -135,10 +135,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Go 1.24
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version-file: "services/browser-bridge/go.mod"
           cache-dependency-path: "services/browser-bridge/go.sum"
 
       - name: Download Go Modules
@@ -181,7 +181,7 @@ jobs:
       - name: Test Frontend Docker Build (No Push)
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./frontend
           file: ./frontend/Dockerfile
           push: false
           cache-from: type=gha,scope=frontend
