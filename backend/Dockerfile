@@ -21,10 +21,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PLAYWRIGHT_BROWSERS_PATH="/ms-playwright" \
     PATH="/app/.venv/bin:$PATH"
 
-# Install Chromium runtime dependencies, OpenCV libraries, and healthcheck tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
+    libatomic1 \
     libnss3 \
     libnspr4 \
     libatk1.0-0 \
