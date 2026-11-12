@@ -67,7 +67,7 @@ jobs:
       # Creates the formal GitHub Release page with auto-generated changelog
       - name: Publish GitHub Release
         if: steps.tagger.outputs.new_tag != ''
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tagger.outputs.new_tag }}
           name: Release ${{ steps.tagger.outputs.new_tag }}
