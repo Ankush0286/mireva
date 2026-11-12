@@ -20,7 +20,7 @@ def ensure_test_image() -> Path:
         draw.text((280, 500), "GrowthCraft AI Test Post", fill=(255, 255, 255))
         draw.text((370, 560), "Automated Recipe Replay", fill=(148, 163, 184))
         img.save(test_img)
-        print(f"🖼️ Generated test image: {test_img}")
+        print(f"Generated test image: {test_img}")
 
     return test_img
 

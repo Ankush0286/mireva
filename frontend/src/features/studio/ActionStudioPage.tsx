@@ -196,12 +196,7 @@ export const ActionStudioPage: React.FC = () => {
     setStudioStatus(`Connecting to ${pMeta?.name || "platform"}...`);
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsHost =
-      window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1"
-        ? "127.0.0.1:8000"
-        : window.location.host;
-    const wsUrl = `${protocol}//${wsHost}/api/v1/recipes/record/ws?platform=${targetPlatform}`;
+    const wsUrl = `${protocol}//${window.location.host}/ws/record?platform=${targetPlatform}`;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;

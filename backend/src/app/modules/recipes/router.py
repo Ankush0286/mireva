@@ -5,15 +5,12 @@ from fastapi import (
     APIRouter,
     Depends,
     Query,
-    WebSocket,
-    WebSocketDisconnect,
     status,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import PlatformType
 from app.db.dependencies import get_db_session
-from app.db.session import async_session_factory
 from app.modules.recipes.schemas import (
     RecipeCreateRequest,
     RecipeResponse,
@@ -114,26 +111,3 @@ async def delete_recipe(
 ) -> None:
     await service.delete_recipe(recipe_id)
 
-
-@router.websocket("/record/ws")
-async def recorder_websocket_stream(
-    websocket: WebSocket,
-    platform: str = "instagram",
-):
-    """
-    Hardened WebSocket stream: Uses isolated short-lived DB sessions
-    so long recording sessions never hold connections hostage.
-    """
-    await websocket.accept()
-    try:
-        async with async_session_factory() as db:
-            service = RecipeService(db)
-            await service.run_recipe_recorder_stream(platform=platform, websocket=websocket)
-    except WebSocketDisconnect:
-        logger.debug("Client disconnected from recipe recorder stream: %s", platform)
-    except Exception as exc:
-        logger.error("Error in recipe recorder stream for %s: %s", platform, exc, exc_info=True)
-        try:
-            await websocket.close()
-        except Exception:
-            pass

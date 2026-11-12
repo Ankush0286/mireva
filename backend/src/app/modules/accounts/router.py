@@ -1,18 +1,16 @@
 import logging
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import (
     APIRouter,
     Depends,
     Query,
-    WebSocket,
-    WebSocketDisconnect,
     status,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.dependencies import get_db_session
-from app.db.session import async_session_factory
 from app.modules.accounts.schemas import (
     AccountCreateRequest,
     AccountResponse,
@@ -100,32 +98,26 @@ async def delete_account(
     await service.delete_account(account_id)
 
 
-@router.websocket("/{account_id}/session/ws")
-async def account_session_auth_stream(
-    websocket: WebSocket,
+@router.post(
+    "/{account_id}/session/verify",
+    response_model=AccountResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Verify storage_state.json exists and mark account authenticated",
+)
+async def verify_browser_session(
     account_id: UUID,
-):
-    """
-    Hardened WebSocket stream: Uses isolated short-lived DB sessions
-    so long browser auth sessions never exhaust the connection pool.
-    """
-    await websocket.accept()
-    try:
-        # 1. Fetch account metadata in a dedicated short-lived session
-        async with async_session_factory() as db:
-            service = AccountService(db)
-            await service.get_by_id_or_raise(account_id)
+    service: AccountService = Depends(get_account_service),
+) -> AccountResponse:
+    account = await service.get_by_id_or_raise(account_id)
 
-        # 2. Run the interactive browser session without locking a DB connection
-        async with async_session_factory() as db:
-            service = AccountService(db)
-            await service.run_session_authentication_stream(account_id, websocket)
+    # Check if Go Bridge successfully wrote the cookies to disk
+    storage_dir = Path("storage/browser_sessions") / str(account.id)
+    storage_path = storage_dir / "storage_state.json"
 
-    except WebSocketDisconnect:
-        logger.debug("Client disconnected from account session stream: %s", account_id)
-    except Exception as exc:
-        logger.error("Error in account session stream for %s: %s", account_id, exc, exc_info=True)
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+    if not storage_path.exists():
+        from app.common.exceptions import AppError
+        raise AppError("No session cookies were saved. Please try logging in again.")
+
+    # Mark authenticated in PostgreSQL
+    updated = await service.mark_browser_session_authenticated(account.id, storage_path)
+    return AccountResponse.model_validate(updated)

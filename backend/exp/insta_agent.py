@@ -267,7 +267,7 @@ async def scroll_page(
 @instagram_agent.tool
 async def navigate_to(ctx: RunContext[BrowserDeps], url: str) -> str:
     """Navigates the browser directly to a specific URL."""
-    print(f"🌐 [Agent] Navigating to {url}...")
+    print(f"[Agent] Navigating to {url}...")
     page = ctx.deps.page
     try:
         await page.goto(url)

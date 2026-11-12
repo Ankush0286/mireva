@@ -380,13 +380,7 @@ export const AccountsPage: React.FC = () => {
     setStudioStatus(`Connecting to ${acc.platform}...`);
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsHost =
-      window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1"
-        ? "127.0.0.1:8000"
-        : window.location.host;
-
-    const wsUrl = `${protocol}//${wsHost}/api/v1/accounts/${acc.id}/session/ws`;
+    const wsUrl = `${protocol}//${window.location.host}/ws/session?account_id=${acc.id}&platform=${acc.platform}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -418,12 +412,42 @@ export const AccountsPage: React.FC = () => {
     ws.onclose = () => setIsWsConnected(false);
   };
 
-  const closeAuthStudio = () => {
+  const verifySessionMutation = useMutation({
+    mutationFn: (accountId: string) => api.accounts.verifySession(accountId),
+    onSuccess: (updatedAccount) => {
+      queryClient.setQueryData(
+        queryKeys.accounts.list(false),
+        (old: Account[] | undefined) => {
+          if (!old) return old;
+          return old.map((a) =>
+            a.id === updatedAccount.id ? updatedAccount : a,
+          );
+        },
+      );
+      showToast(`Session authenticated for @${updatedAccount.handle}!`);
+    },
+    onError: (err: any) => {
+      showToast(err?.message || "Failed to verify session cookies.", "error");
+    },
+  });
+
+  const closeAuthStudio = (save: boolean = false) => {
+    if (!authStudioAccount) return;
+
+    // Disconnect from Go Bridge
     wsRef.current?.close();
     wsRef.current = null;
     setIsWsConnected(false);
+
+    const accountId = authStudioAccount.id;
     setAuthStudioAccount(null);
-    queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all });
+
+    // If the user clicked "Save Session", wait 1 second for Go to flush the JSON, then verify
+    if (save) {
+      setTimeout(() => {
+        verifySessionMutation.mutate(accountId);
+      }, 1000);
+    }
   };
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -914,14 +938,15 @@ export const AccountsPage: React.FC = () => {
                 <div className="flex items-center justify-end w-1/4 gap-2">
                   <button
                     type="button"
-                    onClick={closeAuthStudio}
+                    onClick={() => closeAuthStudio(false)}
                     className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
                   >
                     Exit
                   </button>
                   <button
                     type="button"
-                    onClick={closeAuthStudio}
+                    onClick={() => closeAuthStudio(true)}
+                    disabled={verifySessionMutation.isPending}
                     className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-[#0E3A75] hover:bg-[#092854] text-white text-xs font-bold shadow-md transition-all cursor-pointer transform active:scale-95 shrink-0"
                     title="Saves authenticated cookies to vault"
                   >

@@ -601,6 +601,11 @@ export const api = {
 
     delete: (accountId: string) =>
       request<void>(`/api/v1/accounts/${accountId}`, { method: "DELETE" }),
+
+    verifySession: (accountId: string) =>
+      request<Account>(`/api/v1/accounts/${accountId}/session/verify`, {
+        method: "POST",
+      }),
   },
 
   // --------------------------------------------------------------------------

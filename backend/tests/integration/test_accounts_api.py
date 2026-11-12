@@ -1,10 +1,6 @@
-from unittest.mock import AsyncMock
 
 import pytest
 from httpx import AsyncClient
-from starlette.testclient import TestClient
-
-from app.modules.accounts.service import AccountService
 
 
 @pytest.mark.anyio
@@ -129,38 +125,3 @@ async def test_invalid_payload_returns_422(client: AsyncClient):
     response = await client.post("/api/v1/accounts/", json=payload)
     assert response.status_code == 422
     assert response.json()["error"] == "VALIDATION_ERROR"
-
-
-@pytest.mark.anyio
-async def test_account_session_websocket_endpoint_handshake(
-    client: AsyncClient, 
-    ws_client: TestClient, 
-    monkeypatch: pytest.MonkeyPatch
-):
-    # 1. Create account via API
-    res = await client.post(
-        "/api/v1/accounts/",
-        json={"platform": "instagram", "handle": "ws_test_account"},
-    )
-    assert res.status_code == 201
-    account_id = res.json()["id"]
-
-    # 2. Mock run_session_authentication_stream to send a dummy message
-    mock_stream = AsyncMock()
-
-    async def fake_stream(acc_id, ws):
-        # Send a dummy message to unlock ws.receive_json() in the test
-        await ws.send_json({"status": "mocked"})
-
-    mock_stream.side_effect = fake_stream
-    monkeypatch.setattr(AccountService, "run_session_authentication_stream", mock_stream)
-
-    # 3. Connect and WAIT for the message sent by fake_stream
-    with ws_client.websocket_connect(f"/api/v1/accounts/{account_id}/session/ws") as ws:
-        data = ws.receive_json()
-        assert data["status"] == "mocked"
-
-    # 4. Verify service method was invoked with the correct account ID
-    mock_stream.assert_called_once()
-    args, _ = mock_stream.call_args
-    assert str(args[0]) == str(account_id)

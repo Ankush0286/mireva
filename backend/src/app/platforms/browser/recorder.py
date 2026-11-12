@@ -281,7 +281,7 @@ RECORDER_INJECTION_JS = """
 
 def _print_banner() -> None:
     print(f"\n{BLUE}{BOLD}╔══════════════════════════════════════════════════════════════════════╗{RESET}")
-    print(f"{BLUE}{BOLD}║{RESET}  {CYAN}{BOLD}⚡ GrowthCraft Multi-Action Browser Recipe Recorder Studio{RESET}          {BLUE}{BOLD}║{RESET}")
+    print(f"{BLUE}{BOLD}║{RESET}  {CYAN}{BOLD} GrowthCraft Multi-Action Browser Recipe Recorder Studio{RESET}          {BLUE}{BOLD}║{RESET}")
     print(f"{BLUE}{BOLD}╚══════════════════════════════════════════════════════════════════════╝{RESET}")
 
 

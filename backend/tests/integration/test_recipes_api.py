@@ -1,11 +1,7 @@
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
-from starlette.testclient import TestClient
-
-from app.modules.recipes.service import RecipeService
 
 
 @pytest.mark.anyio
@@ -105,23 +101,3 @@ async def test_create_recipe_empty_name_returns_422(client: AsyncClient):
     assert res.status_code == 422
     assert res.json()["error"] == "VALIDATION_ERROR"
 
-
-@pytest.mark.anyio
-async def test_recipe_recorder_websocket_endpoint_handshake(
-    ws_client: TestClient, 
-    monkeypatch: pytest.MonkeyPatch
-):
-    """
-    Verifies that the /recipes/record/ws endpoint accepts WebSocket upgrades
-    and delegates cleanly to RecipeService.
-    Uses Starlette's synchronous TestClient (`ws_client`) for WebSocket connections.
-    """
-    mock_stream = AsyncMock()
-    monkeypatch.setattr(RecipeService, "run_recipe_recorder_stream", mock_stream)
-
-    with ws_client.websocket_connect("/api/v1/recipes/record/ws?platform=instagram"):
-        pass
-
-    mock_stream.assert_called_once()
-    args, kwargs = mock_stream.call_args
-    assert kwargs.get("platform") == "instagram" or args[0] == "instagram"
