@@ -267,7 +267,6 @@ async def run_browser_agent_task(
     task_prompt: str,
     start_url: str | None = None,
     headless: bool = True,
-    max_turns: int = 15,
 ) -> str:
     """
     Core lifecycle orchestrator:
