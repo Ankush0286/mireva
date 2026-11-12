@@ -1,0 +1,61 @@
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.v1.router import api_v1_router
+from app.automation.scheduler import start_scheduler, stop_scheduler
+from app.core.config import settings
+from app.core.error_handlers import register_exception_handlers
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifecycle events for app startup and shutdown."""
+    logger.info("Initializing Marketing AI Agent backend...")
+    # Start APScheduler background engine
+    start_scheduler()
+    yield
+    logger.info("Shutting down Marketing AI Agent backend...")
+    # Gracefully stop APScheduler background engine
+    stop_scheduler()
+
+
+app = FastAPI(
+    title="Marketing AI Agent",
+    description="Offline-first autonomous marketing agent and social CRM",
+    version="0.1.0",
+    lifespan=lifespan,
+    debug=settings.DEBUG,
+)
+
+# 1. Register Centralized Exception Handlers
+register_exception_handlers(app)
+
+# 2. CORS Middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# 3. Healthcheck Endpoint
+@app.get("/health", tags=["System"])
+def healthcheck():
+    return {"status": "ok", "app": "marketing-ai"}
+
+
+# 4. Mount API v1 Aggregated Gateway
+app.include_router(
+    api_v1_router,
+    prefix="/api/v1",
+)

@@ -1,0 +1,167 @@
+name: CD — Automated Versioning, Release & Container Publishing
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "services/browser-bridge/**"
+      - "Caddyfile"
+      - "docker-compose.yml"
+      - ".github/workflows/cd.yml"
+
+  # Allows triggering a manual release bump from the GitHub Actions UI
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Manual Version Bump Type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  GATEWAY_IMAGE: ${{ github.repository }}-frontend
+  BACKEND_IMAGE: ${{ github.repository }}-backend
+  BRIDGE_IMAGE: ${{ github.repository }}-bridge
+
+jobs:
+  # ----- AUTOMATED SEMVER VERSIONING & GITHUB RELEASE -----
+  version-and-release:
+    name: Compute Version & Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.tagger.outputs.new_tag }}
+      has_new_version: ${{ steps.tagger.outputs.tag != '' }}
+    steps:
+      - name: Checkout repository with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Computes SemVer bump based on conventional commits (fix:, feat:, BREAKING)
+      - name: Automated SemVer Tagging
+        id: tagger
+        uses: mathieudutour/github-tag-action@v7
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: ${{ github.event.inputs.bump || 'patch' }}
+          release_branches: "main,master"
+          tag_prefix: "v"
+          fetch_all_tags: true
+          initial_version: 0.0.0
+
+      # Creates the formal GitHub Release page with auto-generated changelog
+      - name: Publish GitHub Release
+        if: steps.tagger.outputs.new_tag != ''
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tagger.outputs.new_tag }}
+          name: Release ${{ steps.tagger.outputs.new_tag }}
+          body: ${{ steps.tagger.outputs.changelog }}
+          generate_release_notes: true
+          make_latest: true
+
+  # ----- BUILD & PUSH DOCKER IMAGES TO GHCR -----
+  publish-containers:
+    name: Build & Push GHCR Containers
+    needs: [version-and-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Free up Runner Disk (+28GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry (ghcr.io)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ----- GATEWAY & FRONTEND (Caddy + Vite SPA) -----
+      - name: Extract Metadata (Caddy/Frontend)
+        id: meta-gateway
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.GATEWAY_IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ needs.version-and-release.outputs.new_version }},enable=${{ needs.version-and-release.outputs.new_version != '' }}
+            type=sha,prefix=sha-
+
+      - name: Build & Push Gateway Container
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta-gateway.outputs.tags }}
+          labels: ${{ steps.meta-gateway.outputs.labels }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      # ----- BACKEND (FastAPI + Playwright Chromium) -----
+      - name: Extract Metadata (Backend)
+        id: meta-backend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ needs.version-and-release.outputs.new_version }},enable=${{ needs.version-and-release.outputs.new_version != '' }}
+            type=sha,prefix=sha-
+
+      - name: Build & Push Backend Container
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      # ----- BROWSER BRIDGE (Go CDP Server) -----
+      - name: Extract Metadata (Browser Bridge)
+        id: meta-bridge
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.BRIDGE_IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ needs.version-and-release.outputs.new_version }},enable=${{ needs.version-and-release.outputs.new_version != '' }}
+            type=sha,prefix=sha-
+
+      - name: Build & Push Browser Bridge Container
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/browser-bridge
+          file: ./services/browser-bridge/Dockerfile
+          push: true
+          tags: ${{ steps.meta-bridge.outputs.tags }}
+          labels: ${{ steps.meta-bridge.outputs.labels }}
+          cache-from: type=gha,scope=bridge
+          cache-to: type=gha,mode=max,scope=bridge

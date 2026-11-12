@@ -1,0 +1,30 @@
+# Secrets & Environment
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Node
+**/node_modules
+**/dist
+
+# Go
+services/browser-bridge/bin
+**/*.exe
+
+# Persistent Browser Sessions & Cache
+backend/storage/browser_sessions
+backend/storage/local_db
+backend/storage/logs
+backend/storage/media
+
+# Version Control & CI
+.git
+.github

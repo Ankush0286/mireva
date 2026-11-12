@@ -1,0 +1,27 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.mypy_cache
+.pytest_cache
+.ruff_cache
+
+# Virtual environments
+.venv
+
+# Environment variables
+.env
+
+# Session files
+storage/local_db/*.db
+storage/local_db/*.db-*
+storage/browser_sessions/
+storage/logs/
+
+index.html
+
+exp/
+storage/media/

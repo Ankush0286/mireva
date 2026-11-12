@@ -1,0 +1,274 @@
+import asyncio
+import json
+import logging
+from collections.abc import AsyncGenerator
+from dataclasses import asdict, is_dataclass
+from typing import Any
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.agent.loop import run_agent_turn, stream_agent_turn
+from app.core.agent_config import agent_settings
+from app.db.dependencies import get_db_session
+from app.modules.copilot.schemas import (
+    ChatMessageCreateRequest,
+    ChatMessageResponse,
+    ChatSessionCreateRequest,
+    ChatSessionDetailResponse,
+    ChatSessionResponse,
+    ChatSessionUpdateRequest,
+    ToolExecutionLogResponse,
+)
+from app.modules.copilot.service import CopilotService
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+def get_copilot_service(db: AsyncSession = Depends(get_db_session)) -> CopilotService:
+    """Dependency injection factory for CopilotService."""
+    return CopilotService(db)
+
+
+class AgentChatRequest(BaseModel):
+    """Payload accepted by POST /api/v1/copilot/sessions/{session_id}/chat and /stream"""
+
+    content: str = Field(..., min_length=1, max_length=20000)
+    model_override: str | None = None
+    thinking: bool = False
+
+
+# =============================================================================
+# Available AI Models Endpoint
+# =============================================================================
+
+
+@router.get(
+    "/models",
+    status_code=status.HTTP_200_OK,
+    summary="List configured AI models for the Copilot selector",
+)
+async def list_available_models() -> list[dict[str, Any]]:
+    configured_models = getattr(agent_settings, "AVAILABLE_MODELS", None)
+    if configured_models:
+        return [
+            asdict(m) if is_dataclass(m) and not isinstance(m, type) else dict(m)
+            for m in configured_models
+        ]
+    return [
+        {
+            "id": agent_settings.DEFAULT_MODEL,
+            "name": "Mireva AI",
+            "description": "Fast autonomous tool execution & copywriting",
+            "badge": "DEFAULT",
+        }
+    ]
+
+
+# =============================================================================
+# Chat Session Endpoints
+# =============================================================================
+
+
+@router.post(
+    "/sessions",
+    response_model=ChatSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new AI conversation thread",
+)
+async def create_session(
+    payload: ChatSessionCreateRequest,
+    service: CopilotService = Depends(get_copilot_service),
+) -> ChatSessionResponse:
+    session = await service.create_session(payload.to_command())
+    return ChatSessionResponse.model_validate(session)
+
+
+@router.get(
+    "/sessions",
+    response_model=list[ChatSessionResponse],
+    status_code=status.HTTP_200_OK,
+    summary="List all AI conversation sessions",
+)
+async def list_sessions(
+    include_archived: bool = Query(default=False, description="Include archived sessions"),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    service: CopilotService = Depends(get_copilot_service),
+) -> list[ChatSessionResponse]:
+    sessions = await service.list_sessions(
+        include_archived=include_archived, limit=limit, offset=offset
+    )
+    return [ChatSessionResponse.model_validate(session) for session in sessions]
+
+
+@router.get(
+    "/sessions/{session_id}",
+    response_model=ChatSessionDetailResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get conversation session with full message history",
+)
+async def get_session(
+    session_id: UUID,
+    service: CopilotService = Depends(get_copilot_service),
+) -> ChatSessionDetailResponse:
+    session = await service.get_session_by_id_or_raise(session_id)
+    return ChatSessionDetailResponse.model_validate(session)
+
+
+@router.patch(
+    "/sessions/{session_id}",
+    response_model=ChatSessionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Rename or archive a chat thread",
+)
+async def update_session(
+    session_id: UUID,
+    payload: ChatSessionUpdateRequest,
+    service: CopilotService = Depends(get_copilot_service),
+) -> ChatSessionResponse:
+    session = await service.update_session(payload.to_command(session_id))
+    return ChatSessionResponse.model_validate(session)
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a chat thread and all message traces",
+)
+async def delete_session(
+    session_id: UUID,
+    service: CopilotService = Depends(get_copilot_service),
+) -> None:
+    await service.delete_session(session_id)
+
+
+# =============================================================================
+# Chat Messages & Tool Trace Endpoints
+# =============================================================================
+
+
+@router.post(
+    "/sessions/{session_id}/messages",
+    response_model=ChatMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Append a user or assistant message to a conversation thread",
+)
+async def add_message(
+    session_id: UUID,
+    payload: ChatMessageCreateRequest,
+    service: CopilotService = Depends(get_copilot_service),
+) -> ChatMessageResponse:
+    message = await service.add_message(payload.to_command(session_id))
+    return ChatMessageResponse.model_validate(message)
+
+
+@router.get(
+    "/sessions/{session_id}/messages",
+    response_model=list[ChatMessageResponse],
+    status_code=status.HTTP_200_OK,
+    summary="List all messages in a conversation thread with pagination",
+)
+async def list_messages(
+    session_id: UUID,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    service: CopilotService = Depends(get_copilot_service),
+) -> list[ChatMessageResponse]:
+    messages = await service.list_messages(session_id=session_id, limit=limit, offset=offset)
+    return [ChatMessageResponse.model_validate(msg) for msg in messages]
+
+
+@router.delete(
+    "/sessions/{session_id}/messages/{message_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a message and all subsequent conversation turns",
+)
+async def delete_messages_from(
+    session_id: UUID,
+    message_id: UUID,
+    service: CopilotService = Depends(get_copilot_service),
+) -> None:
+    await service.delete_messages_from(session_id=session_id, message_id=message_id)
+
+
+@router.get(
+    "/sessions/{session_id}/tools",
+    response_model=list[ToolExecutionLogResponse],
+    status_code=status.HTTP_200_OK,
+    summary="List all tool execution traces triggered during a conversation",
+)
+async def list_tool_executions(
+    session_id: UUID,
+    service: CopilotService = Depends(get_copilot_service),
+) -> list[ToolExecutionLogResponse]:
+    tool_logs = await service.list_tool_executions(session_id=session_id)
+    return [ToolExecutionLogResponse.model_validate(trace) for trace in tool_logs]
+
+
+# =============================================================================
+# Interactive AI Agent Execution & Streaming Endpoints
+# =============================================================================
+
+
+@router.post(
+    "/sessions/{session_id}/chat",
+    response_model=ChatMessageResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Send a prompt to the AI Copilot and receive the completed reply",
+)
+async def chat_with_agent(
+    session_id: UUID,
+    payload: AgentChatRequest,
+    db: AsyncSession = Depends(get_db_session),
+) -> ChatMessageResponse:
+    assistant_msg = await run_agent_turn(
+        db=db,
+        session_id=session_id,
+        user_prompt=payload.content,
+        model_override=payload.model_override,
+        thinking=payload.thinking,
+    )
+    return ChatMessageResponse.model_validate(assistant_msg)
+
+
+@router.post(
+    "/sessions/{session_id}/stream",
+    summary="Stream AI Copilot response tokens in real time via SSE",
+)
+async def stream_chat_with_agent(
+    session_id: UUID,
+    payload: AgentChatRequest,
+    db: AsyncSession = Depends(get_db_session),
+) -> StreamingResponse:
+    token_generator = stream_agent_turn(
+        db=db,
+        session_id=session_id,
+        user_prompt=payload.content,
+        model_override=payload.model_override,
+        thinking=payload.thinking,
+    )
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            async for item in token_generator:
+                yield f"data: {json.dumps(item)}\n\n"
+                await asyncio.sleep(0)
+            yield "data: [DONE]\n\n"
+        except Exception as exc:
+            logger.error("Streaming error in copilot: %s", exc, exc_info=True)
+            yield f"data: {json.dumps(f'[ERROR]: {str(exc)}')}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

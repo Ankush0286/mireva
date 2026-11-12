@@ -1,0 +1,8 @@
+bin/
+*.exe
+mireva-bridge
+*.test
+
+.git
+.gitignore
+*.md

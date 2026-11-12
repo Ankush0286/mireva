@@ -1,0 +1,89 @@
+services:
+  caddy:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mireva-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # Enables HTTP/3 (QUIC)
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      browser-bridge:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mireva-backend
+    restart: unless-stopped
+    shm_size: "1gb" # Prevents Chromium OOM crashes during feed scraping
+    env_file:
+      - ./backend/.env
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - PYTHONPATH=/app/src
+    volumes:
+      - mireva-storage:/app/storage
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  browser-bridge:
+    build:
+      context: ./services/browser-bridge
+      dockerfile: Dockerfile
+    container_name: mireva-bridge
+    restart: unless-stopped
+    shm_size: "1gb" # Prevents Chromium OOM crashes during canvas screencasts
+    environment:
+      - BRIDGE_PORT=8080
+      - GIN_MODE=release
+      - BRIDGE_HEADLESS=true
+    volumes:
+      - mireva-storage:/app/backend/storage
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  mireva-storage:
+  caddy_data:
+  caddy_config:
+    

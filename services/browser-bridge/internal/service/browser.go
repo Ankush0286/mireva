@@ -1,0 +1,403 @@
+package service
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"browser-bridge/internal/config"
+	"browser-bridge/internal/model"
+
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/runtime"
+	"github.com/chromedp/chromedp"
+	"github.com/gorilla/websocket"
+)
+
+type SafeWS struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+func NewSafeWS(conn *websocket.Conn) *SafeWS {
+	return &SafeWS{conn: conn}
+}
+
+func (s *SafeWS) SendJSON(msg model.ServerOutboundMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conn.WriteJSON(msg)
+}
+
+func GetPlatformURL(platform string) string {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "twitter":
+		return "https://x.com/home"
+	case "facebook":
+		return "https://www.facebook.com/"
+	case "email":
+		return "https://mail.google.com/"
+	default:
+		return "https://www.instagram.com/"
+	}
+}
+
+type BrowserService struct {
+	cfg *config.Config
+}
+
+func NewBrowserService(cfg *config.Config) *BrowserService {
+	return &BrowserService{cfg: cfg}
+}
+
+func (s *BrowserService) RunSessionStream(ws *websocket.Conn, accountID, platform string) {
+	sessionDir := filepath.Join(s.cfg.StorageDir, "browser_sessions", accountID)
+	storageStatePath := filepath.Join(sessionDir, "storage_state.json")
+	_ = os.MkdirAll(sessionDir, 0755)
+
+	log.Printf("[Bridge] ▶ New Session Stream: account=%s platform=%s", accountID, platform)
+	s.runStream(NewSafeWS(ws), sessionDir, storageStatePath, GetPlatformURL(platform), false)
+}
+
+func (s *BrowserService) RunRecordStream(ws *websocket.Conn, platform string) {
+	sessionDir := filepath.Join(s.cfg.StorageDir, "browser_sessions", "recorder_"+platform)
+	storageStatePath := filepath.Join(sessionDir, "storage_state.json")
+	_ = os.MkdirAll(sessionDir, 0755)
+
+	log.Printf("[Bridge] ▶ New Workflow Record Stream: platform=%s", platform)
+	s.runStream(NewSafeWS(ws), sessionDir, storageStatePath, GetPlatformURL(platform), true)
+}
+
+func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, targetURL string, isRecording bool) {
+	CleanStaleProfileLocks(sessionDir)
+
+	_ = ws.SendJSON(model.ServerOutboundMessage{
+		Type:    "status",
+		Message: "Mireva Go Bridge: Launching Chromium container...",
+	})
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.UserDataDir(sessionDir),
+		chromedp.Flag("headless", s.cfg.IsHeadless),
+		chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		chromedp.Flag("disable-infobars", true),
+		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-setuid-sandbox", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("no-default-browser-check", true),
+		chromedp.Flag("no-first-run", true),
+		chromedp.WindowSize(1280, 800),
+		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"),
+	)
+
+	log.Printf("[Bridge] Allocating Chromium process (headless=%v)...", s.cfg.IsHeadless)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
+
+	taskCtx, cancelTask := chromedp.NewContext(allocCtx)
+	defer cancelTask()
+
+	var clickMu sync.Mutex
+	var lastClickDesc string
+	var lastClickTime float64
+	var frameCount uint64
+
+	// Listen for CDP Screencast Frames
+	_ = chromedp.Listen(taskCtx, func(ev any) {
+		switch e := ev.(type) {
+		case *page.EventScreencastFrame:
+			// FIX: Base64 encode the binary JPEG bytes so the browser's data URI is valid!
+			encodedBase64 := base64.StdEncoding.EncodeToString(e.Data)
+
+			_ = ws.SendJSON(model.ServerOutboundMessage{
+				Type: "frame",
+				Data: encodedBase64,
+			})
+
+			count := atomic.AddUint64(&frameCount, 1)
+			if count == 1 {
+				log.Printf("[Bridge] First frame captured and streamed to client (%d bytes)", len(e.Data))
+			} else if count%100 == 0 {
+				log.Printf("[Bridge] Streamed %d frames to client", count)
+			}
+
+			// Acknowledge frame to CDP immediately to receive the next frame
+			go func(sessionID int64) {
+				_, _ = chromedp.Call(taskCtx, page.ScreencastFrameAck, page.ScreencastFrameAckParams{
+					SessionID: sessionID,
+				})
+			}(e.SessionID)
+
+		case *page.EventFrameNavigated:
+			if e.Frame.ParentID == "" {
+				log.Printf("[Bridge] Navigated: %s", e.Frame.URL)
+				_ = ws.SendJSON(model.ServerOutboundMessage{
+					Type: "navigated",
+					URL:  e.Frame.URL,
+				})
+			}
+
+		case *runtime.EventBindingCalled:
+			if e.Name == "__gc_record_step" {
+				var step map[string]interface{}
+				if err := json.Unmarshal([]byte(e.Payload), &step); err != nil {
+					log.Printf("[Bridge] Warning: invalid recorder payload: %v", err)
+					return
+				}
+
+				stype, _ := step["type"].(string)
+				desc, _ := step["description"].(string)
+				ts, _ := step["timestamp"].(float64)
+				nowSec := ts / 1000.0
+
+				if stype == "click" {
+					clickMu.Lock()
+					duplicate := desc == lastClickDesc && (nowSec-lastClickTime) < 1.2
+					if !duplicate {
+						lastClickDesc = desc
+						lastClickTime = nowSec
+					}
+					clickMu.Unlock()
+					if duplicate {
+						return
+					}
+				}
+
+				log.Printf("[Bridge] 🟢 Step Captured: [%s] %s", stype, desc)
+				_ = ws.SendJSON(model.ServerOutboundMessage{
+					Type: "step",
+					Step: step,
+				})
+			}
+		}
+	})
+
+	// Restore session cookies if available
+	if storageStatePath != "" {
+		if err := LoadStorageStateJSON(taskCtx, storageStatePath); err == nil {
+			log.Printf("[Bridge] Restored cookies from %s", storageStatePath)
+		}
+	}
+
+	// 1. Set 1280x800 Viewport
+	_, _ = chromedp.Call(taskCtx, emulation.SetDeviceMetricsOverride, emulation.SetDeviceMetricsOverrideParams{
+		Width:             1280,
+		Height:            800,
+		DeviceScaleFactor: 1.0,
+	})
+
+	// 2. Inject Anti-Detection Stealth Script
+	_, _ = chromedp.Call(taskCtx, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{
+		Source: StealthInitScript,
+	})
+
+	// 3. Register Recorder Script if in recording mode
+	if isRecording {
+		_, _ = chromedp.Call(taskCtx, runtime.Enable, cdp.Empty{})
+		_, _ = chromedp.Call(taskCtx, runtime.AddBinding, runtime.AddBindingParams{
+			Name: "__gc_record_step",
+		})
+		_, _ = chromedp.Call(taskCtx, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{
+			Source: RecorderInjectionJS,
+		})
+	}
+
+	// 4. Navigate to Target URL
+	log.Printf("[Bridge] Navigating to %s...", targetURL)
+	if err := chromedp.Do(taskCtx, chromedp.Navigate(targetURL)); err != nil {
+		log.Printf("[Bridge] Navigation failed: %v", err)
+		_ = ws.SendJSON(model.ServerOutboundMessage{
+			Type:    "status",
+			Message: fmt.Sprintf("Navigation error: %v", err),
+		})
+		return
+	}
+
+	// 5. Start JPEG Screencast Stream
+	quality := int64(75)
+	_, err := chromedp.Call(taskCtx, page.StartScreencast, page.StartScreencastParams{
+		Format:        page.StartScreencastFormatJpeg,
+		Quality:       &quality,
+		MaxWidth:      1280,
+		MaxHeight:     800,
+		EveryNthFrame: 1,
+	})
+	if err != nil {
+		log.Printf("[Bridge] Failed to start screencast: %v", err)
+		_ = ws.SendJSON(model.ServerOutboundMessage{
+			Type:    "status",
+			Message: fmt.Sprintf("Screencast error: %v", err),
+		})
+		return
+	}
+
+	log.Printf("[Bridge] Screencast active! Streaming to client.")
+	_ = ws.SendJSON(model.ServerOutboundMessage{Type: "navigated", URL: targetURL})
+	_ = ws.SendJSON(model.ServerOutboundMessage{Type: "status", Message: "Ready"})
+
+	// Inbound Canvas Interaction Loop
+	for {
+		_, msgBytes, err := ws.conn.ReadMessage()
+		if err != nil {
+			log.Printf("[Bridge] Client closed connection.")
+			break
+		}
+
+		var inMsg model.ClientInboundMessage
+		if err := json.Unmarshal(msgBytes, &inMsg); err != nil {
+			log.Printf("[Bridge] Warning: ignoring malformed client message: %v", err)
+			continue
+		}
+
+		switch inMsg.Type {
+		case "click":
+			x, y := float64(inMsg.X), float64(inMsg.Y)
+			go func() {
+				_, _ = chromedp.Call(taskCtx, input.DispatchMouseEvent, input.DispatchMouseEventParams{
+					Type:       input.DispatchMouseEventTypeMousePressed,
+					X:          x,
+					Y:          y,
+					Button:     input.MouseButtonLeft,
+					ClickCount: 1,
+				})
+				time.Sleep(30 * time.Millisecond)
+				_, _ = chromedp.Call(taskCtx, input.DispatchMouseEvent, input.DispatchMouseEventParams{
+					Type:       input.DispatchMouseEventTypeMouseReleased,
+					X:          x,
+					Y:          y,
+					Button:     input.MouseButtonLeft,
+					ClickCount: 1,
+				})
+			}()
+
+		case "type":
+			text := inMsg.Text
+			go func() {
+				_, _ = chromedp.Call(taskCtx, input.InsertText, input.InsertTextParams{
+					Text: text,
+				})
+			}()
+
+		case "key":
+			key := inMsg.Key
+			go func() {
+				switch key {
+				case "Enter":
+					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+						Type:                  input.DispatchKeyEventTypeRawKeyDown,
+						Key:                   "Enter",
+						Code:                  "Enter",
+						WindowsVirtualKeyCode: 13,
+						NativeVirtualKeyCode:  13,
+					})
+					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+						Type:                  input.DispatchKeyEventTypeKeyUp,
+						Key:                   "Enter",
+						Code:                  "Enter",
+						WindowsVirtualKeyCode: 13,
+						NativeVirtualKeyCode:  13,
+					})
+				case "Backspace":
+					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+						Type:                  input.DispatchKeyEventTypeRawKeyDown,
+						Key:                   "Backspace",
+						Code:                  "Backspace",
+						WindowsVirtualKeyCode: 8,
+						NativeVirtualKeyCode:  8,
+					})
+					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+						Type:                  input.DispatchKeyEventTypeKeyUp,
+						Key:                   "Backspace",
+						Code:                  "Backspace",
+						WindowsVirtualKeyCode: 8,
+						NativeVirtualKeyCode:  8,
+					})
+				case "Tab":
+					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+						Type:                  input.DispatchKeyEventTypeRawKeyDown,
+						Key:                   "Tab",
+						Code:                  "Tab",
+						WindowsVirtualKeyCode: 9,
+						NativeVirtualKeyCode:  9,
+					})
+					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+						Type:                  input.DispatchKeyEventTypeKeyUp,
+						Key:                   "Tab",
+						Code:                  "Tab",
+						WindowsVirtualKeyCode: 9,
+						NativeVirtualKeyCode:  9,
+					})
+				default:
+					_, _ = chromedp.Call(taskCtx, input.InsertText, input.InsertTextParams{
+						Text: key,
+					})
+				}
+			}()
+
+		case "navigate":
+			navURL := strings.TrimSpace(inMsg.URL)
+			if navURL != "" {
+				if !strings.HasPrefix(navURL, "http://") && !strings.HasPrefix(navURL, "https://") {
+					navURL = "https://" + navURL
+				}
+				go func(u string) {
+					if err := chromedp.Do(taskCtx, chromedp.Navigate(u)); err != nil {
+						log.Printf("[Bridge] Warning: client navigation to %s failed: %v", u, err)
+						return
+					}
+					_ = ws.SendJSON(model.ServerOutboundMessage{Type: "navigated", URL: u})
+				}(navURL)
+			}
+
+		case "upload_file":
+			filename := inMsg.Filename
+			if filename == "" {
+				filename = "upload.png"
+			}
+			b64Data := inMsg.Data
+			go func(fname, data string) {
+				mediaDir := filepath.Join(s.cfg.MediaDir)
+				if err := os.MkdirAll(mediaDir, 0755); err != nil {
+					log.Printf("[Bridge] Warning: could not create media dir %s: %v", mediaDir, err)
+					return
+				}
+				savePath := filepath.Join(mediaDir, "live_"+fname)
+
+				fileBytes, err := base64.StdEncoding.DecodeString(data)
+				if err != nil {
+					log.Printf("[Bridge] Warning: upload has invalid base64: %v", err)
+					return
+				}
+				if err := os.WriteFile(savePath, fileBytes, 0644); err != nil {
+					log.Printf("[Bridge] Warning: could not write upload to %s: %v", savePath, err)
+					return
+				}
+				if err := chromedp.Do(taskCtx, chromedp.SetUploadFiles("input[type='file']", []string{savePath})); err != nil {
+					log.Printf("[Bridge] Warning: could not attach upload %s: %v", savePath, err)
+				}
+			}(filename, b64Data)
+		}
+	}
+
+	if storageStatePath != "" {
+		if err := SaveStorageStateJSON(taskCtx, storageStatePath); err != nil {
+			log.Printf("[Bridge] Warning: could not save cookies to %s: %v", storageStatePath, err)
+		} else {
+			log.Printf("[Bridge] Saved session cookies to %s", storageStatePath)
+		}
+	}
+
+	_, _ = chromedp.Call(taskCtx, page.StopScreencast, cdp.Empty{})
+	log.Printf("[Bridge] Cleaned up session stream.")
+}
