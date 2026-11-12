@@ -55,7 +55,7 @@ jobs:
       # Computes SemVer bump based on conventional commits (fix:, feat:, BREAKING)
       - name: Automated SemVer Tagging
         id: tagger
-        uses: mathieudutour/github-tag-action@v6.2
+        uses: mathieudutour/github-tag-action@v7
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           default_bump: ${{ github.event.inputs.bump || 'patch' }}
