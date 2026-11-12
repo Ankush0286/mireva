@@ -1,15 +1,14 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
-from pydantic import SecretStr, computed_field
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 
 class Settings(BaseSettings):
-    """Application settings configured via environment variables."""
+    """Application settings loaded from backend/.env or environment variables."""
 
     model_config = SettingsConfigDict(
         env_file=str(ROOT_DIR / ".env"),
@@ -18,34 +17,31 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # App Environment
-    API_VERSION: str = "v1"
-    APP_NAME: str = "Marketing AI Agent"
-    ENVIRONMENT: Literal["development", "staging", "production"] = "development"
+    # Core Application
+    APP_NAME: str = "Mireva"
     DEBUG: bool = False
 
-    # Database Configuration (Supabase / PostgreSQL)
+    # Database Configuration (PostgreSQL)
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres"
 
-    # Database Connection Pool Settings
+    # Connection Pool Settings
     DB_ECHO: bool = False
-    DB_POOL_SIZE: int = 5
-    DB_MAX_OVERFLOW: int = 10
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 5
 
-    # AI Model Gateways & Security
-    OPENROUTER_API_KEY: SecretStr
-    FIREWORKS_API_KEY: SecretStr
+    # AI Model Gateways (Defaults allow running with either provider or in CI tests)
+    OPENROUTER_API_KEY: SecretStr = SecretStr("")
+    FIREWORKS_API_KEY: SecretStr = SecretStr("")
+
+    # Master Vault Encryption Key (AES-128 Fernet)
     SECRET_KEY: SecretStr = SecretStr("default-dev-secret-key-32-bytes!")
 
-    @computed_field
-    @property
-    def is_production(self) -> bool:
-        return self.ENVIRONMENT == "production"
+    # Default Agent Model
+    AGENT_MODEL: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """Cached settings instance parsed once at startup."""
     return Settings()
 
 
