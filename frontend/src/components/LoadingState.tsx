@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const KEYFRAMES = `
 @keyframes gc-pixel-on { 0%, 100% { opacity: 0.15 } 40% { opacity: 1 } }

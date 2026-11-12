@@ -83,12 +83,22 @@ export interface StrategistState {
   updated_at: string;
 }
 
+export interface RecipeStep {
+  type: string;
+  description?: string;
+  selectors?: string[];
+  target?: string;
+  variable?: string;
+  optional?: boolean;
+  [key: string]: any;
+}
+
 export interface ActionRecipe {
   id: string;
   name: string;
   platform: PlatformType;
   description: string | null;
-  steps: Array<Record<string, unknown>>;
+  steps: RecipeStep[];
   is_default: boolean;
   is_active: boolean;
   extra_metadata: Record<string, unknown>;
@@ -1264,7 +1274,7 @@ export const api = {
       name: string;
       platform: PlatformType;
       description?: string;
-      steps?: Array<Record<string, unknown>>;
+      steps?: RecipeStep[];
       is_default?: boolean;
       is_active?: boolean;
       extra_metadata?: Record<string, unknown>;
@@ -1279,7 +1289,7 @@ export const api = {
       payload: {
         name?: string;
         description?: string;
-        steps?: Array<Record<string, unknown>>;
+        steps?: RecipeStep[];
         is_default?: boolean;
         is_active?: boolean;
         extra_metadata?: Record<string, unknown>;

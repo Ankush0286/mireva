@@ -901,7 +901,7 @@ export const AccountsPage: React.FC = () => {
                 <div className="flex items-center gap-3 w-1/4">
                   <button
                     type="button"
-                    onClick={closeAuthStudio}
+                    onClick={() => closeAuthStudio(false)}
                     className="group flex items-center justify-center w-8 h-8 rounded-full bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-400 transition-colors cursor-pointer"
                     title="Close without saving"
                   >

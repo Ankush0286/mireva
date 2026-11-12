@@ -20,7 +20,7 @@ import {
   RefreshCw,
   AlertCircle,
 } from "lucide-react";
-import { api, type ActionRecipe, type PlatformType } from "../../api/client";
+import { api, type ActionRecipe, type PlatformType, type RecipeStep } from "../../api/client";
 import { queryKeys } from "../../api/queryKeys";
 import { LoadingState } from "../../components/LoadingState";
 
@@ -97,7 +97,7 @@ export const ActionStudioPage: React.FC = () => {
   const [urlInput, setUrlInput] = useState("");
 
   // Live Stream State
-  const [liveSteps, setLiveSteps] = useState<Array<Record<string, any>>>([]);
+  const [liveSteps, setLiveSteps] = useState<RecipeStep[]>([]);
   const [isWsConnected, setIsWsConnected] = useState(false);
   const [hasReceivedFrame, setHasReceivedFrame] = useState(false);
   const [studioStatus, setStudioStatus] = useState(

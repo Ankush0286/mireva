@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Check, X, Sparkles, Send, Clock, Loader2 } from 'lucide-react';
 
 const KEYFRAMES = `
