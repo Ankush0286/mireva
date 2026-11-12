@@ -2,17 +2,23 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package*.json ./
+# Copy package descriptors from frontend directory
+COPY frontend/package*.json ./
 RUN npm install
 
-COPY . .
+# Copy frontend source code and compile Vite production bundle
+COPY frontend/ .
 RUN npm run build
 
-FROM nginx:alpine AS runner
 
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+FROM caddy:2-alpine AS runner
 
-EXPOSE 80
+# Copy compiled static assets from builder stage to Caddy's default webroot
+COPY --from=builder /app/dist /srv
 
-CMD ["nginx", "-g", "daemon off;"]
+# Copy the unified Caddyfile from the repo root
+COPY Caddyfile /etc/caddy/Caddyfile
+
+EXPOSE 80 443 443/udp
+
+CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
