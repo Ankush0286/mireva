@@ -196,6 +196,10 @@ Mireva uses deterministic model routing configured in `backend/src/app/core/agen
 The fastest way to run Mireva locally or on a VPS is via Docker Compose, which orchestrates the Caddy gateway, FastAPI backend, Playwright engine, and Go Browser Bridge together (with `1GB` shared memory configured for Chromium stability).
 
 ### 1. Clone and Configure
+
+> [!IMPORTANT]
+> **Using Supabase with Docker:** Supabase's default Direct Connection (`db.<ref>.supabase.co`) is **IPv6-only** and unreachable from standard Docker networks (`Errno 101`). Always select the **IPv4-compatible Session Pooler** (`...pooler.supabase.com:5432`) in your Supabase **Connect** modal, and make sure the URL starts with `postgresql+asyncpg://`.
+
 ```bash
 git clone https://github.com/Ankush0286/mireva.git
 cd mireva
