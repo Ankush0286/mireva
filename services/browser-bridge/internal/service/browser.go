@@ -237,23 +237,35 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 	_ = ws.SendJSON(model.ServerOutboundMessage{Type: "navigated", URL: targetURL})
 	_ = ws.SendJSON(model.ServerOutboundMessage{Type: "status", Message: "Ready"})
 
-	for {
-		_, msgBytes, err := ws.conn.ReadMessage()
-		if err != nil {
-			log.Printf("[Bridge] Client closed connection.")
-			break
+	inputCh := make(chan model.ClientInboundMessage, 128)
+	var inputWG sync.WaitGroup
+	inputWG.Add(1)
+	go func() {
+		defer inputWG.Done()
+		dispatchKey := func(k, code string, vk, mod int64, commands []string) {
+			_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+				Type:                  input.DispatchKeyEventTypeRawKeyDown,
+				Key:                   k,
+				Code:                  code,
+				WindowsVirtualKeyCode: vk,
+				NativeVirtualKeyCode:  vk,
+				Modifiers:             mod,
+				Commands:              commands,
+			})
+			_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+				Type:                  input.DispatchKeyEventTypeKeyUp,
+				Key:                   k,
+				Code:                  code,
+				WindowsVirtualKeyCode: vk,
+				NativeVirtualKeyCode:  vk,
+				Modifiers:             mod,
+			})
 		}
 
-		var inMsg model.ClientInboundMessage
-		if err := json.Unmarshal(msgBytes, &inMsg); err != nil {
-			log.Printf("[Bridge] Warning: ignoring malformed client message: %v", err)
-			continue
-		}
-
-		switch inMsg.Type {
-		case "click":
-			x, y := float64(inMsg.X), float64(inMsg.Y)
-			go func() {
+		for inMsg := range inputCh {
+			switch inMsg.Type {
+			case "click":
+				x, y := float64(inMsg.X), float64(inMsg.Y)
 				_, _ = chromedp.Call(taskCtx, input.DispatchMouseEvent, input.DispatchMouseEventParams{
 					Type:       input.DispatchMouseEventTypeMousePressed,
 					X:          x,
@@ -269,71 +281,35 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 					Button:     input.MouseButtonLeft,
 					ClickCount: 1,
 				})
-			}()
 
-		case "type":
-			text := inMsg.Text
-			go func() {
+			case "type":
 				_, _ = chromedp.Call(taskCtx, input.InsertText, input.InsertTextParams{
-					Text: text,
+					Text: inMsg.Text,
 				})
-			}()
 
-		case "key":
-			key := inMsg.Key
-			go func() {
-				dispatchKey := func(k, code string, vk int64) {
-					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
-						Type:                  input.DispatchKeyEventTypeRawKeyDown,
-						Key:                   k,
-						Code:                  code,
-						WindowsVirtualKeyCode: vk,
-						NativeVirtualKeyCode:  vk,
-					})
-					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
-						Type:                  input.DispatchKeyEventTypeKeyUp,
-						Key:                   k,
-						Code:                  code,
-						WindowsVirtualKeyCode: vk,
-						NativeVirtualKeyCode:  vk,
-					})
-				}
-
+			case "key":
+				key := inMsg.Key
 				switch key {
 				case "Enter":
-					dispatchKey("Enter", "Enter", 13)
+					dispatchKey("Enter", "Enter", 13, 0, nil)
 				case "Backspace":
-					dispatchKey("Backspace", "Backspace", 8)
+					dispatchKey("Backspace", "Backspace", 8, 0, nil)
 				case "Tab":
-					dispatchKey("Tab", "Tab", 9)
+					dispatchKey("Tab", "Tab", 9, 0, nil)
 				case "Escape":
-					dispatchKey("Escape", "Escape", 27)
+					dispatchKey("Escape", "Escape", 27, 0, nil)
 				case "Delete":
-					dispatchKey("Delete", "Delete", 46)
+					dispatchKey("Delete", "Delete", 46, 0, nil)
 				case "ArrowLeft":
-					dispatchKey("ArrowLeft", "ArrowLeft", 37)
+					dispatchKey("ArrowLeft", "ArrowLeft", 37, 0, nil)
 				case "ArrowUp":
-					dispatchKey("ArrowUp", "ArrowUp", 38)
+					dispatchKey("ArrowUp", "ArrowUp", 38, 0, nil)
 				case "ArrowRight":
-					dispatchKey("ArrowRight", "ArrowRight", 39)
+					dispatchKey("ArrowRight", "ArrowRight", 39, 0, nil)
 				case "ArrowDown":
-					dispatchKey("ArrowDown", "ArrowDown", 40)
+					dispatchKey("ArrowDown", "ArrowDown", 40, 0, nil)
 				case "ControlOrMeta+A":
-					_, _ = chromedp.Call(taskCtx, runtime.Evaluate, runtime.EvaluateParams{
-						Expression: `(() => {
-							const el = document.activeElement;
-							if (!el) return;
-							if (typeof el.select === 'function') {
-								el.select();
-							} else if (el.isContentEditable && window.getSelection && document.createRange) {
-								const range = document.createRange();
-								range.selectNodeContents(el);
-								const sel = window.getSelection();
-								sel.removeAllRanges();
-								sel.addRange(range);
-							}
-						})()`,
-					})
+					dispatchKey("a", "KeyA", 65, 2, []string{"selectAll"})
 				default:
 					if len([]rune(key)) == 1 {
 						_, _ = chromedp.Call(taskCtx, input.InsertText, input.InsertTextParams{
@@ -341,7 +317,30 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 						})
 					}
 				}
-			}()
+			}
+		}
+	}()
+
+	for {
+		_, msgBytes, err := ws.conn.ReadMessage()
+		if err != nil {
+			log.Printf("[Bridge] Client closed connection.")
+			break
+		}
+
+		var inMsg model.ClientInboundMessage
+		if err := json.Unmarshal(msgBytes, &inMsg); err != nil {
+			log.Printf("[Bridge] Warning: ignoring malformed client message: %v", err)
+			continue
+		}
+
+		switch inMsg.Type {
+		case "click", "type", "key":
+			select {
+			case inputCh <- inMsg:
+			default:
+				log.Printf("[Bridge] Warning: input queue full, dropping %s event", inMsg.Type)
+			}
 
 		case "navigate":
 			navURL := strings.TrimSpace(inMsg.URL)
@@ -387,6 +386,9 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 			}(filename, b64Data)
 		}
 	}
+
+	close(inputCh)
+	inputWG.Wait()
 
 	if storageStatePath != "" {
 		if err := SaveStorageStateJSON(taskCtx, storageStatePath); err != nil {

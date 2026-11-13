@@ -305,7 +305,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
 
     setLoadingHistory(true);
     Promise.all([
-      api.copilot.getMessages(sessionId),
+      api.copilot.getMessages(sessionId, 500),
       api.copilot.getTools(sessionId),
     ])
       .then(([historyMessages, toolLogs]) => {
@@ -378,8 +378,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({
       abortControllerRef.current = abortController;
       const turnStartTime = getHighResNow();
 
+      const userMsgId = generateMessageId("user");
       const userMsg: ExtendedChatMessage = {
-        id: generateMessageId("user"),
+        id: userMsgId,
         session_id: targetSessionId,
         role: "user",
         content: textToSend,
@@ -400,89 +401,112 @@ export const ChatPage: React.FC<ChatPageProps> = ({
 
       let firstTokenRecorded = false;
 
+      const reconcileTurnIds = async () => {
+        const sess = await api.copilot
+          .getSession(targetSessionId)
+          .catch(() => null);
+        const persisted =
+          sess?.messages ??
+          (await api.copilot
+            .getMessages(targetSessionId, 500)
+            .catch(() => null));
+        if (
+          !persisted ||
+          persisted.length === 0 ||
+          abortControllerRef.current !== abortController
+        ) {
+          return;
+        }
+
+        const lastMsg = persisted[persisted.length - 1];
+        const secondLastMsg =
+          persisted.length >= 2 ? persisted[persisted.length - 2] : null;
+
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id === userMsgId && m.id.startsWith("user-")) {
+              if (
+                lastMsg.role === "assistant" &&
+                secondLastMsg?.role === "user" &&
+                secondLastMsg.content === textToSend
+              ) {
+                return { ...m, id: secondLastMsg.id };
+              }
+              if (lastMsg.role === "user" && lastMsg.content === textToSend) {
+                return { ...m, id: lastMsg.id };
+              }
+            }
+            if (
+              m.id === assistantMsgId &&
+              m.id.startsWith("assistant-") &&
+              lastMsg.role === "assistant" &&
+              secondLastMsg?.role === "user" &&
+              secondLastMsg.content === textToSend
+            ) {
+              return { ...m, id: lastMsg.id };
+            }
+            return m;
+          }),
+        );
+      };
+
       try {
         await api.copilot.streamChat(
           targetSessionId,
           textToSend,
           (token: string) => {
+            if (abortControllerRef.current !== abortController) return;
             const elapsedThinking = !firstTokenRecorded
               ? Math.round(getHighResNow() - turnStartTime)
               : undefined;
             firstTokenRecorded = true;
 
-            setMessages((prev) => {
-              const updated = [...prev];
-              const lastIndex = updated.length - 1;
-              if (lastIndex >= 0 && updated[lastIndex].role === "assistant") {
-                updated[lastIndex] = {
-                  ...updated[lastIndex],
-                  content: updated[lastIndex].content + token,
-                  thinkingDurationMs:
-                    elapsedThinking ?? updated[lastIndex].thinkingDurationMs,
-                };
-                return updated;
-              }
-              return updated;
-            });
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId
+                  ? {
+                      ...m,
+                      content: m.content + token,
+                      thinkingDurationMs:
+                        elapsedThinking ?? m.thinkingDurationMs,
+                    }
+                  : m,
+              ),
+            );
           },
           (realtimeTools: ToolExecutionLog[]) => {
-            setMessages((prev) => {
-              const updated = [...prev];
-              const lastIndex = updated.length - 1;
-              if (lastIndex >= 0 && updated[lastIndex].role === "assistant") {
-                updated[lastIndex] = {
-                  ...updated[lastIndex],
-                  turnTools: realtimeTools,
-                };
-              }
-              return updated;
-            });
+            if (abortControllerRef.current !== abortController) return;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId
+                  ? { ...m, turnTools: realtimeTools }
+                  : m,
+              ),
+            );
           },
           abortController.signal,
           modelId,
           thinking,
           (liveUsage: UsageState) => {
-            setMessages((prev) => {
-              const updated = [...prev];
-              const lastIndex = updated.length - 1;
-              if (lastIndex >= 0 && updated[lastIndex].role === "assistant") {
-                updated[lastIndex] = {
-                  ...updated[lastIndex],
-                  token_count: liveUsage.totalTokens,
-                  extra_metadata: {
-                    ...(updated[lastIndex].extra_metadata || {}),
-                    usage: liveUsage,
-                  },
-                };
-              }
-              return updated;
-            });
+            if (abortControllerRef.current !== abortController) return;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId
+                  ? {
+                      ...m,
+                      token_count: liveUsage.totalTokens,
+                      extra_metadata: {
+                        ...(m.extra_metadata || {}),
+                        usage: liveUsage,
+                      },
+                    }
+                  : m,
+              ),
+            );
           },
         );
 
-        const persisted = await api.copilot
-          .getMessages(targetSessionId)
-          .catch(() => null);
-        if (persisted && persisted.length >= 2) {
-          const dbAssistant = persisted[persisted.length - 1];
-          const dbUser = persisted[persisted.length - 2];
-          setMessages((prev) => {
-            if (prev.length < 2) return prev;
-            const updated = [...prev];
-            const aIdx = updated.length - 1;
-            const uIdx = updated.length - 2;
-            if (updated[uIdx].role === "user" && dbUser.role === "user") {
-              updated[uIdx] = { ...updated[uIdx], id: dbUser.id };
-            }
-            if (
-              updated[aIdx].role === "assistant" &&
-              dbAssistant.role === "assistant"
-            ) {
-              updated[aIdx] = { ...updated[aIdx], id: dbAssistant.id };
-            }
-            return updated;
-          });
-        }
+        await reconcileTurnIds();
 
         queryClient.invalidateQueries({ queryKey: queryKeys.copilot.sessions });
         queryClient.invalidateQueries({
@@ -492,24 +516,28 @@ export const ChatPage: React.FC<ChatPageProps> = ({
           queryKey: queryKeys.copilot.tools(targetSessionId),
         });
       } catch (err: any) {
+        await reconcileTurnIds();
         if (err?.name === "AbortError") return;
         console.error("Streaming error:", err);
         const errMsg = err?.message || "Agent communication error";
-        setMessages((prev) => {
-          const updated = [...prev];
-          const lastIndex = updated.length - 1;
-          if (lastIndex >= 0 && updated[lastIndex].role === "assistant") {
-            updated[lastIndex] = {
-              ...updated[lastIndex],
-              content: `⚠️ ${errMsg}. Please verify FIREWORKS_API_KEY / OPENROUTER_API_KEY in backend/.env`,
-            };
-          }
-          return updated;
-        });
+        if (abortControllerRef.current === abortController) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsgId
+                ? {
+                    ...m,
+                    content: `⚠️ ${errMsg}. Please verify FIREWORKS_API_KEY / OPENROUTER_API_KEY in backend/.env`,
+                  }
+                : m,
+            ),
+          );
+        }
       } finally {
-        isStreamingRef.current = false;
-        setIsStreaming(false);
-        abortControllerRef.current = null;
+        if (abortControllerRef.current === abortController) {
+          isStreamingRef.current = false;
+          setIsStreaming(false);
+          abortControllerRef.current = null;
+        }
       }
     },
     [sessionId, isStreaming, queryClient, onSessionCreated],
@@ -608,6 +636,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
             scheduled_at: getIsoTimestamp(),
           });
           queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
+          return;
         }
 
         handleSendMessage(`I approved: "${title}". Please proceed.`);
