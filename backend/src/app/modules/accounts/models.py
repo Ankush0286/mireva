@@ -131,8 +131,12 @@ class ConnectedAccount(AuditBase):
         return datetime.now(UTC) < cooldown
 
     def _check_and_reset_cooldown(self) -> bool:
-        """Restores ACTIVE status if rate_limited cooldown period has expired."""
-        if self.status == AccountStatus.RATE_LIMITED and not self.is_in_cooldown():
+        """Restores ACTIVE status if an expiring cooldown period has elapsed."""
+        if (
+            self.status == AccountStatus.RATE_LIMITED
+            and self.cooldown_until is not None
+            and not self.is_in_cooldown()
+        ):
             self.status = AccountStatus.ACTIVE
             self.cooldown_until = None
             return True

@@ -1,7 +1,7 @@
 import logging
 from uuid import UUID
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.automation.throttler import account_throttler
@@ -12,7 +12,7 @@ from app.modules.campaigns.commands import (
     RecordPostDeliveryCommand,
     RecordPostFailureCommand,
 )
-from app.modules.campaigns.models import ScheduledPost
+from app.modules.campaigns.models import Campaign, ScheduledPost
 from app.modules.campaigns.service import CampaignService
 from app.modules.history.commands import LogActivityCommand
 from app.modules.history.service import HistoryService
@@ -23,16 +23,33 @@ logger = logging.getLogger(__name__)
 
 async def _claim_post_for_publishing(db: AsyncSession, post_id: UUID) -> bool:
     """
-    Atomic claim guard: Transitions post to PUBLISHING only if it is still SCHEDULED.
-    Prevents race conditions where two workers publish duplicate posts.
+    Atomic claim guard: Transitions post to PUBLISHING only if it is still SCHEDULED
+    and its parent Campaign remains eligible (not PAUSED, ARCHIVED, or COMPLETED).
     """
+    eligible_campaign_subquery = (
+        select(Campaign.id)
+        .where(
+            Campaign.id == ScheduledPost.campaign_id,
+            Campaign.status.notin_(
+                [
+                    CampaignStatus.PAUSED,
+                    CampaignStatus.ARCHIVED,
+                    CampaignStatus.COMPLETED,
+                ]
+            ),
+        )
+        .scalar_subquery()
+    )
+
     stmt = (
         update(ScheduledPost)
         .where(
             ScheduledPost.id == post_id,
             ScheduledPost.status == PostStatus.SCHEDULED,
+            ScheduledPost.campaign_id == eligible_campaign_subquery,
         )
         .values(status=PostStatus.PUBLISHING)
+        .execution_options(synchronize_session=False)
     )
     result = await db.execute(stmt)
     await db.commit()
@@ -188,6 +205,7 @@ async def run_post_dispatcher(db: AsyncSession | None = None) -> int:
         logger.info("PostDispatcher: Found %d due posts ready for delivery.", len(due_posts))
 
         for post in due_posts:
+            target_post_id = post.id
             try:
                 success = await _dispatch_single_post(
                     db=session,
@@ -199,7 +217,9 @@ async def run_post_dispatcher(db: AsyncSession | None = None) -> int:
                 if success:
                     dispatched_count += 1
             except Exception as iter_exc:
-                logger.error("Error processing post %s: %s", post.id, iter_exc, exc_info=True)
+                logger.error(
+                    "Error processing post %s: %s", target_post_id, iter_exc, exc_info=True
+                )
                 await session.rollback()
 
         return dispatched_count

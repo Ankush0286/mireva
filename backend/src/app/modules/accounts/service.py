@@ -15,7 +15,6 @@ from app.modules.accounts.exceptions import (
     DailyPostQuotaExceededError,
 )
 from app.modules.accounts.models import ConnectedAccount
-from app.modules.outreach.exceptions import DailyDMQuotaExceededError
 
 
 def _ensure_uuid(val: UUID | str) -> UUID:
@@ -168,15 +167,20 @@ class AccountService:
             "api_secret": decrypt_token(account.encrypted_api_secret),
         }
 
-    async def record_post_activity(self, account_id: UUID | str) -> ConnectedAccount:
+    async def record_post_activity(
+        self, account_id: UUID | str, enforce_limits: bool = True
+    ) -> ConnectedAccount:
         account = await self.get_by_id_or_raise(account_id)
 
-        if account.is_in_cooldown():
-            until_str = account.cooldown_until.isoformat() if account.cooldown_until else "unknown"
-            raise AccountInCooldownError(account.handle, until_str)
+        if enforce_limits:
+            if account.is_in_cooldown():
+                until_str = (
+                    account.cooldown_until.isoformat() if account.cooldown_until else "unknown"
+                )
+                raise AccountInCooldownError(account.handle, until_str)
 
-        if not account.can_post_today():
-            raise DailyPostQuotaExceededError(account.handle, account.daily_post_limit)
+            if not account.can_post_today():
+                raise DailyPostQuotaExceededError(account.handle, account.daily_post_limit)
 
         account.daily_posts_sent += 1
         account.last_action_at = datetime.now(UTC)
@@ -185,15 +189,22 @@ class AccountService:
         await self.db.refresh(account)
         return account
 
-    async def record_dm_activity(self, account_id: UUID | str) -> ConnectedAccount:
+    async def record_dm_activity(
+        self, account_id: UUID | str, enforce_limits: bool = True
+    ) -> ConnectedAccount:
         account = await self.get_by_id_or_raise(account_id)
 
-        if account.is_in_cooldown():
-            until_str = account.cooldown_until.isoformat() if account.cooldown_until else "unknown"
-            raise AccountInCooldownError(account.handle, until_str)
+        if enforce_limits:
+            if account.is_in_cooldown():
+                until_str = (
+                    account.cooldown_until.isoformat() if account.cooldown_until else "unknown"
+                )
+                raise AccountInCooldownError(account.handle, until_str)
 
-        if not account.can_send_dm_today():
-            raise DailyDMQuotaExceededError(account.handle, account.daily_dm_limit)
+            if not account.can_send_dm_today():
+                from app.modules.outreach.exceptions import DailyDMQuotaExceededError
+
+                raise DailyDMQuotaExceededError(account.handle, account.daily_dm_limit)
 
         account.daily_dms_sent += 1
         account.last_action_at = datetime.now(UTC)

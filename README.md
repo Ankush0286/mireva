@@ -14,7 +14,7 @@
   <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.12%2B-blue?logo=python&logoColor=white" alt="Python 3.12+"></a>
   <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white" alt="Go 1.25"></a>
   <a href="https://react.dev"><img src="https://img.shields.io/badge/React-19.3-61DAFB?logo=react&logoColor=black" alt="React 19"></a>
-  <a href="#testing-and-verification"><img src="https://img.shields.io/badge/Tests-267_Passed-success?logo=pytest&logoColor=white" alt="267 Tests Passed"></a>
+  <a href="#testing-and-verification"><img src="https://img.shields.io/badge/Tests-268_Passed-success?logo=pytest&logoColor=white" alt="268 Tests Passed"></a>
 </div>
 
 <br>

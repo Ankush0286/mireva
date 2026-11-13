@@ -84,6 +84,7 @@ async def _dispatch_single_dm(
     account_platform = account.platform.value
 
     # 4. Execute Platform Adapter
+    remote_sent = False
     try:
         adapter = PlatformRegistry.get_adapter(account)
         logger.info(
@@ -98,6 +99,7 @@ async def _dispatch_single_dm(
                 recipient_handle=recipient_handle,
                 message_text=message_text,
             )
+            remote_sent = True
         finally:
             await adapter.close()
 
@@ -134,26 +136,36 @@ async def _dispatch_single_dm(
             exc_info=True,
         )
         await db.rollback()
-        try:
-            await outreach_service.record_failure(
-                RecordMessageFailureCommand(
-                    message_id=message_id,
-                    error_message=str(exc) or type(exc).__name__,
+
+        # Only transition to FAILED if the remote adapter did NOT complete the send
+        if not remote_sent:
+            try:
+                await outreach_service.record_failure(
+                    RecordMessageFailureCommand(
+                        message_id=message_id,
+                        error_message=str(exc) or type(exc).__name__,
+                    )
                 )
-            )
-            await history_service.log_activity(
-                LogActivityCommand(
-                    activity_type=ActivityType.MESSAGE_REJECTED,
-                    severity=ActivitySeverity.ERROR,
-                    title=f"Cold DM delivery failed on {account_platform}",
-                    description=str(exc) or type(exc).__name__,
-                    entity_type="outreach_message",
-                    entity_id=message_id,
-                    actor="dm_dispatcher",
+                await history_service.log_activity(
+                    LogActivityCommand(
+                        activity_type=ActivityType.MESSAGE_REJECTED,
+                        severity=ActivitySeverity.ERROR,
+                        title=f"Cold DM delivery failed on {account_platform}",
+                        description=str(exc) or type(exc).__name__,
+                        entity_type="outreach_message",
+                        entity_id=message_id,
+                        actor="dm_dispatcher",
+                    )
                 )
-            )
-        except Exception:
-            pass
+            except Exception as fail_err:
+                await db.rollback()
+                logger.error(
+                    "Failed to record delivery failure for DM %s to @%s: %s",
+                    message_id,
+                    recipient_handle,
+                    fail_err,
+                    exc_info=True,
+                )
 
         if isinstance(exc, Exception):
             return False
@@ -182,6 +194,7 @@ async def run_dm_dispatcher(db: AsyncSession | None = None) -> int:
         )
 
         for msg in approved_messages:
+            target_msg_id = msg.id
             try:
                 success = await _dispatch_single_dm(
                     db=session,
@@ -193,7 +206,7 @@ async def run_dm_dispatcher(db: AsyncSession | None = None) -> int:
                 if success:
                     dispatched_count += 1
             except Exception as iter_exc:
-                logger.error("Error processing DM %s: %s", msg.id, iter_exc, exc_info=True)
+                logger.error("Error processing DM %s: %s", target_msg_id, iter_exc, exc_info=True)
                 await session.rollback()
 
         return dispatched_count

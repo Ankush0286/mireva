@@ -578,3 +578,47 @@ async def test_dm_not_stuck_as_dispatched_on_worker_cancellation(db_session: Asy
 
     refreshed = await outreach_service.get_message_by_id_or_raise(msg.id)
     assert refreshed.status == OutreachMessageStatus.FAILED
+
+
+@pytest.mark.anyio
+async def test_post_not_claimed_if_campaign_paused_during_throttle_wait(db_session: AsyncSession):
+    """
+    Verifies that if a campaign is paused while wait_and_acquire is pending,
+    _claim_post_for_publishing rejects the claim and skips publishing.
+    """
+    acc_service = AccountService(db_session)
+    camp_service = CampaignService(db_session)
+
+    account = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="throttle_race_bot")
+    )
+    await account_throttler.reset(account.id)
+
+    campaign = await camp_service.create_campaign(
+        CreateCampaignCommand(name="Race Promo", status=CampaignStatus.ACTIVE)
+    )
+    post = await camp_service.queue_post(
+        QueuePostCommand(
+            campaign_id=campaign.id,
+            account_id=account.id,
+            content="Race post",
+            scheduled_at=datetime.now(UTC) - timedelta(minutes=5),
+            status=PostStatus.SCHEDULED,
+        )
+    )
+
+    async def _pause_campaign_during_wait(*args: object, **kwargs: object) -> bool:
+        # Pause the campaign while worker is waiting in throttler
+        await camp_service.update_campaign(
+            UpdateCampaignCommand(campaign_id=campaign.id, status=CampaignStatus.PAUSED)
+        )
+        return True
+
+    with patch.object(
+        account_throttler, "wait_and_acquire", side_effect=_pause_campaign_during_wait
+    ):
+        dispatched = await run_post_dispatcher(db=db_session)
+
+    assert dispatched == 0
+    refreshed_post = await camp_service.get_post_by_id_or_raise(post.id)
+    assert refreshed_post.status == PostStatus.SCHEDULED

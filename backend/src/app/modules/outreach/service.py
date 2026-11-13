@@ -338,7 +338,7 @@ class OutreachService:
         message = await self.get_message_by_id_or_raise(cmd.message_id)
         message.mark_as_dispatched(platform_id=cmd.platform_message_id)
 
-        await self.account_service.record_dm_activity(message.account_id)
+        await self.account_service.record_dm_activity(message.account_id, enforce_limits=False)
 
         lead = await self.get_lead_by_id(message.lead_id)
         if lead and lead.stage in (LeadStage.DISCOVERED, LeadStage.QUALIFIED):

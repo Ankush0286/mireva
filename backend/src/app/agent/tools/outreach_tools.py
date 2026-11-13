@@ -237,10 +237,22 @@ async def dispatch_dm_now(
     try:
         async with ctx.deps.db_session_scope() as db:
             service = OutreachService(db)
+            acc_service = AccountService(db)
             msg = await service.get_message_by_id_or_raise(UUID(message_id))
+            account = await acc_service.get_by_id_or_raise(msg.account_id)
+
+            if account.is_in_cooldown():
+                until_str = (
+                    account.cooldown_until.isoformat() if account.cooldown_until else "unknown"
+                )
+                return {"error": f"Account @{account.handle} is in cooldown until {until_str}"}
+
+            if not account.can_send_dm_today():
+                return {
+                    "error": f"Account @{account.handle} has reached its daily limit of {account.daily_dm_limit} cold DMs."
+                }
 
             # Read related entities into memory before any refresh
-            account = msg.account
             lead_handle = msg.lead.handle
             content_to_send = msg.content
 
