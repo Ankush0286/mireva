@@ -39,7 +39,7 @@
 # Self-host the full stack in under 2 minutes with Docker
 git clone https://github.com/Ankush0286/mireva.git && cd mireva
 cp backend/.env.example backend/.env
-docker compose up -d --build
+docker compose up -d
 ```
 
 > [!TIP]
@@ -206,7 +206,7 @@ Edit `backend/.env` with your PostgreSQL connection string, a generated Fernet `
 
 ### 2. Launch Stack
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 * **Local UI:** Open `http://localhost`
 * **Custom Domain (Production Auto-HTTPS):** Run `DOMAIN=app.yourdomain.com docker compose up -d`
