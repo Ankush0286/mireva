@@ -501,3 +501,27 @@ async def test_get_nonexistent_rule_raises(db_session: AsyncSession):
     service = TriggerService(db_session)
     with pytest.raises(TriggerRuleNotFoundError):
         await service.get_rule_by_id_or_raise(uuid4())
+
+
+@pytest.mark.anyio
+async def test_update_rule_clearing_all_keywords_raises(db_session: AsyncSession):
+    service = TriggerService(db_session)
+    account = await _create_sample_account(db_session)
+
+    rule = await service.create_rule(
+        CreateTriggerRuleCommand(
+            name="Valid Rule",
+            platform=PlatformType.TWITTER,
+            account_id=account.id,
+            keywords_any=["pricing"],
+        )
+    )
+
+    with pytest.raises(InvalidTriggerRuleError):
+        await service.update_rule(
+            UpdateTriggerRuleCommand(
+                rule_id=rule.id,
+                keywords_any=[],
+                keywords_all=[],
+            )
+        )

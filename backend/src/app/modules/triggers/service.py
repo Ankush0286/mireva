@@ -215,6 +215,12 @@ class TriggerService:
             rule.keywords_all = [k.lower().strip() for k in cmd.keywords_all if k.strip()]
         if cmd.keywords_exclude is not None:
             rule.keywords_exclude = [k.lower().strip() for k in cmd.keywords_exclude if k.strip()]
+
+        if not rule.keywords_any and not rule.keywords_all:
+            raise InvalidTriggerRuleError(
+                "Rule requires at least one keyword in keywords_any or keywords_all."
+            )
+
         if cmd.response_template is not None:
             rule.response_template = cmd.response_template
         if cmd.cooldown_minutes is not None:

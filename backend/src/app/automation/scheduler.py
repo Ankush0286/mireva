@@ -72,7 +72,7 @@ def register_automation_jobs() -> None:
         replace_existing=True,
     )
 
-    logger.info("Registered 4 background automation worker jobs.")
+    logger.info("Registered 5 background automation worker jobs.")
 
 
 def start_scheduler() -> None:

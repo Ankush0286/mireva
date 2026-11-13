@@ -48,7 +48,7 @@ class WatchedHandleUpdateRequest(BaseModel):
 
     display_name: str | None = Field(None, max_length=150)
     is_active: bool | None = None
-    scrape_frequency_minutes: int | None = Field(None, ge=5, le=1440)
+    scrape_frequency_minutes: int | None = Field(None, ge=60, le=1440)
     extra_metadata: dict[str, Any] | None = None
 
     def to_command(self, handle_id: UUID) -> UpdateWatchedHandleCommand:

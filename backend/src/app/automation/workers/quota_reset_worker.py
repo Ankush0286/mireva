@@ -33,7 +33,11 @@ async def run_quota_reset_worker(db: AsyncSession | None = None) -> int:
 
             account._check_and_reset_daily_quotas()
 
-            if account.daily_posts_sent == 0 and (prev_posts > 0 or prev_dms > 0):
+            if (
+                account.daily_posts_sent == 0
+                and account.daily_dms_sent == 0
+                and (prev_posts > 0 or prev_dms > 0)
+            ):
                 reset_count += 1
                 logger.info(
                     "Reset 24-hour quotas for account @%s (%s)",
