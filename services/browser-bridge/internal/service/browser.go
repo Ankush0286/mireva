@@ -113,11 +113,9 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 	var lastClickTime float64
 	var frameCount uint64
 
-	// Listen for CDP Screencast Frames
 	_ = chromedp.Listen(taskCtx, func(ev any) {
 		switch e := ev.(type) {
 		case *page.EventScreencastFrame:
-			// FIX: Base64 encode the binary JPEG bytes so the browser's data URI is valid!
 			encodedBase64 := base64.StdEncoding.EncodeToString(e.Data)
 
 			_ = ws.SendJSON(model.ServerOutboundMessage{
@@ -132,7 +130,6 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 				log.Printf("[Bridge] Streamed %d frames to client", count)
 			}
 
-			// Acknowledge frame to CDP immediately to receive the next frame
 			go func(sessionID int64) {
 				_, _ = chromedp.Call(taskCtx, page.ScreencastFrameAck, page.ScreencastFrameAckParams{
 					SessionID: sessionID,
@@ -183,26 +180,22 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 		}
 	})
 
-	// Restore session cookies if available
 	if storageStatePath != "" {
 		if err := LoadStorageStateJSON(taskCtx, storageStatePath); err == nil {
 			log.Printf("[Bridge] Restored cookies from %s", storageStatePath)
 		}
 	}
 
-	// 1. Set 1280x800 Viewport
 	_, _ = chromedp.Call(taskCtx, emulation.SetDeviceMetricsOverride, emulation.SetDeviceMetricsOverrideParams{
 		Width:             1280,
 		Height:            800,
 		DeviceScaleFactor: 1.0,
 	})
 
-	// 2. Inject Anti-Detection Stealth Script
 	_, _ = chromedp.Call(taskCtx, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{
 		Source: StealthInitScript,
 	})
 
-	// 3. Register Recorder Script if in recording mode
 	if isRecording {
 		_, _ = chromedp.Call(taskCtx, runtime.Enable, cdp.Empty{})
 		_, _ = chromedp.Call(taskCtx, runtime.AddBinding, runtime.AddBindingParams{
@@ -213,7 +206,6 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 		})
 	}
 
-	// 4. Navigate to Target URL
 	log.Printf("[Bridge] Navigating to %s...", targetURL)
 	if err := chromedp.Do(taskCtx, chromedp.Navigate(targetURL)); err != nil {
 		log.Printf("[Bridge] Navigation failed: %v", err)
@@ -224,7 +216,6 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 		return
 	}
 
-	// 5. Start JPEG Screencast Stream
 	quality := int64(75)
 	_, err := chromedp.Call(taskCtx, page.StartScreencast, page.StartScreencastParams{
 		Format:        page.StartScreencastFormatJpeg,
@@ -246,7 +237,110 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 	_ = ws.SendJSON(model.ServerOutboundMessage{Type: "navigated", URL: targetURL})
 	_ = ws.SendJSON(model.ServerOutboundMessage{Type: "status", Message: "Ready"})
 
-	// Inbound Canvas Interaction Loop
+	inputCtx, cancelInput := context.WithCancel(taskCtx)
+	defer cancelInput()
+
+	inputCh := make(chan model.ClientInboundMessage, 128)
+	var inputWG sync.WaitGroup
+	inputWG.Add(1)
+	go func() {
+		defer inputWG.Done()
+		withInputTimeout := func(fn func(context.Context)) {
+			cCtx, cancel := context.WithTimeout(inputCtx, 5*time.Second)
+			defer cancel()
+			fn(cCtx)
+		}
+
+		dispatchKey := func(k, code string, vk, mod int64, commands []string) {
+			withInputTimeout(func(cCtx context.Context) {
+				_, _ = chromedp.Call(cCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+					Type:                  input.DispatchKeyEventTypeRawKeyDown,
+					Key:                   k,
+					Code:                  code,
+					WindowsVirtualKeyCode: vk,
+					NativeVirtualKeyCode:  vk,
+					Modifiers:             mod,
+					Commands:              commands,
+				})
+				_, _ = chromedp.Call(cCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+					Type:                  input.DispatchKeyEventTypeKeyUp,
+					Key:                   k,
+					Code:                  code,
+					WindowsVirtualKeyCode: vk,
+					NativeVirtualKeyCode:  vk,
+					Modifiers:             mod,
+				})
+			})
+		}
+
+		for inMsg := range inputCh {
+			if inputCtx.Err() != nil {
+				return
+			}
+			switch inMsg.Type {
+			case "click":
+				x, y := float64(inMsg.X), float64(inMsg.Y)
+				withInputTimeout(func(cCtx context.Context) {
+					_, _ = chromedp.Call(cCtx, input.DispatchMouseEvent, input.DispatchMouseEventParams{
+						Type:       input.DispatchMouseEventTypeMousePressed,
+						X:          x,
+						Y:          y,
+						Button:     input.MouseButtonLeft,
+						ClickCount: 1,
+					})
+					time.Sleep(30 * time.Millisecond)
+					_, _ = chromedp.Call(cCtx, input.DispatchMouseEvent, input.DispatchMouseEventParams{
+						Type:       input.DispatchMouseEventTypeMouseReleased,
+						X:          x,
+						Y:          y,
+						Button:     input.MouseButtonLeft,
+						ClickCount: 1,
+					})
+				})
+
+			case "type":
+				withInputTimeout(func(cCtx context.Context) {
+					_, _ = chromedp.Call(cCtx, input.InsertText, input.InsertTextParams{
+						Text: inMsg.Text,
+					})
+				})
+
+			case "key":
+				key := inMsg.Key
+				switch key {
+				case "Enter":
+					dispatchKey("Enter", "Enter", 13, 0, nil)
+				case "Backspace":
+					dispatchKey("Backspace", "Backspace", 8, 0, nil)
+				case "Tab":
+					dispatchKey("Tab", "Tab", 9, 0, nil)
+				case "Escape":
+					dispatchKey("Escape", "Escape", 27, 0, nil)
+				case "Delete":
+					dispatchKey("Delete", "Delete", 46, 0, nil)
+				case "ArrowLeft":
+					dispatchKey("ArrowLeft", "ArrowLeft", 37, 0, nil)
+				case "ArrowUp":
+					dispatchKey("ArrowUp", "ArrowUp", 38, 0, nil)
+				case "ArrowRight":
+					dispatchKey("ArrowRight", "ArrowRight", 39, 0, nil)
+				case "ArrowDown":
+					dispatchKey("ArrowDown", "ArrowDown", 40, 0, nil)
+				case "ControlOrMeta+A":
+					dispatchKey("a", "KeyA", 65, 2, []string{"selectAll"})
+				default:
+					if len([]rune(key)) == 1 {
+						withInputTimeout(func(cCtx context.Context) {
+							_, _ = chromedp.Call(cCtx, input.InsertText, input.InsertTextParams{
+								Text: key,
+							})
+						})
+					}
+				}
+			}
+		}
+	}()
+
 	for {
 		_, msgBytes, err := ws.conn.ReadMessage()
 		if err != nil {
@@ -261,89 +355,11 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 		}
 
 		switch inMsg.Type {
-		case "click":
-			x, y := float64(inMsg.X), float64(inMsg.Y)
-			go func() {
-				_, _ = chromedp.Call(taskCtx, input.DispatchMouseEvent, input.DispatchMouseEventParams{
-					Type:       input.DispatchMouseEventTypeMousePressed,
-					X:          x,
-					Y:          y,
-					Button:     input.MouseButtonLeft,
-					ClickCount: 1,
-				})
-				time.Sleep(30 * time.Millisecond)
-				_, _ = chromedp.Call(taskCtx, input.DispatchMouseEvent, input.DispatchMouseEventParams{
-					Type:       input.DispatchMouseEventTypeMouseReleased,
-					X:          x,
-					Y:          y,
-					Button:     input.MouseButtonLeft,
-					ClickCount: 1,
-				})
-			}()
-
-		case "type":
-			text := inMsg.Text
-			go func() {
-				_, _ = chromedp.Call(taskCtx, input.InsertText, input.InsertTextParams{
-					Text: text,
-				})
-			}()
-
-		case "key":
-			key := inMsg.Key
-			go func() {
-				switch key {
-				case "Enter":
-					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
-						Type:                  input.DispatchKeyEventTypeRawKeyDown,
-						Key:                   "Enter",
-						Code:                  "Enter",
-						WindowsVirtualKeyCode: 13,
-						NativeVirtualKeyCode:  13,
-					})
-					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
-						Type:                  input.DispatchKeyEventTypeKeyUp,
-						Key:                   "Enter",
-						Code:                  "Enter",
-						WindowsVirtualKeyCode: 13,
-						NativeVirtualKeyCode:  13,
-					})
-				case "Backspace":
-					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
-						Type:                  input.DispatchKeyEventTypeRawKeyDown,
-						Key:                   "Backspace",
-						Code:                  "Backspace",
-						WindowsVirtualKeyCode: 8,
-						NativeVirtualKeyCode:  8,
-					})
-					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
-						Type:                  input.DispatchKeyEventTypeKeyUp,
-						Key:                   "Backspace",
-						Code:                  "Backspace",
-						WindowsVirtualKeyCode: 8,
-						NativeVirtualKeyCode:  8,
-					})
-				case "Tab":
-					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
-						Type:                  input.DispatchKeyEventTypeRawKeyDown,
-						Key:                   "Tab",
-						Code:                  "Tab",
-						WindowsVirtualKeyCode: 9,
-						NativeVirtualKeyCode:  9,
-					})
-					_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
-						Type:                  input.DispatchKeyEventTypeKeyUp,
-						Key:                   "Tab",
-						Code:                  "Tab",
-						WindowsVirtualKeyCode: 9,
-						NativeVirtualKeyCode:  9,
-					})
-				default:
-					_, _ = chromedp.Call(taskCtx, input.InsertText, input.InsertTextParams{
-						Text: key,
-					})
-				}
-			}()
+		case "click", "type", "key":
+			select {
+			case inputCh <- inMsg:
+			case <-inputCtx.Done():
+			}
 
 		case "navigate":
 			navURL := strings.TrimSpace(inMsg.URL)
@@ -389,6 +405,10 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 			}(filename, b64Data)
 		}
 	}
+
+	cancelInput()
+	close(inputCh)
+	inputWG.Wait()
 
 	if storageStatePath != "" {
 		if err := SaveStorageStateJSON(taskCtx, storageStatePath); err != nil {

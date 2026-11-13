@@ -1242,7 +1242,10 @@ export const api = {
                     }
                     onToken(decoded);
                   }
-                } catch {
+                } catch (err) {
+                  if (err instanceof ApiError) {
+                    throw err;
+                  }
                   onToken(rawPayload);
                 }
               }
