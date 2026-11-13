@@ -66,6 +66,7 @@ services:
     restart: unless-stopped
     shm_size: "1gb" # Prevents Chromium OOM crashes during canvas screencasts
     environment:
+      - BRIDGE_HOST=0.0.0.0
       - BRIDGE_PORT=8080
       - GIN_MODE=release
       - BRIDGE_HEADLESS=true

@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Plus,
   ChevronDown,
@@ -8,21 +8,21 @@ import {
   Layers,
   Search,
   Check,
-} from 'lucide-react';
-import { Navbar } from '../../components/Navbar';
+} from "lucide-react";
+import { Navbar } from "../../components/Navbar";
 
 const CATEGORIES = [
-  'Marketing',
-  'Social Growth',
-  'Competitor Spy',
-  'Cold Outreach',
-  'SEO & Content',
+  "Marketing",
+  "Social Growth",
+  "Competitor Spy",
+  "Cold Outreach",
+  "SEO & Content",
 ];
 
 export const LandingPage: React.FC = () => {
   const navigate = useNavigate();
-  const [prompt, setPrompt] = useState('');
-  const [category, setCategory] = useState('Marketing');
+  const [prompt, setPrompt] = useState("");
+  const [category, setCategory] = useState("Marketing");
   const [thinkingMode, setThinkingMode] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -31,29 +31,33 @@ export const LandingPage: React.FC = () => {
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
         setDropdownOpen(false);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   const quickPrompts = [
     {
       icon: Megaphone,
-      label: 'Launch a campaign',
-      promptText: 'Draft a multi-channel product launch campaign for our brand',
+      label: "Launch a campaign",
+      promptText: "Draft a multi-channel product launch campaign for our brand",
     },
     {
       icon: Layers,
-      label: 'Create social content',
-      promptText: 'Generate 3 high-hook social posts for Twitter and Instagram',
+      label: "Create social content",
+      promptText: "Generate 3 high-hook social posts for Twitter and Instagram",
     },
     {
       icon: Search,
-      label: 'Improve SEO',
-      promptText: 'Audit my target competitor keywords and suggest content gaps',
+      label: "Improve SEO",
+      promptText:
+        "Audit my target competitor keywords and suggest content gaps",
     },
   ];
 
@@ -62,8 +66,10 @@ export const LandingPage: React.FC = () => {
     if (!prompt.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
-    // Smoothly transition to chat and forward the initial prompt!
-    navigate('/chat', { state: { initialPrompt: prompt.trim() } });
+    // Smoothly transition to chat and forward the initial prompt and thinking mode!
+    navigate("/chat", {
+      state: { initialPrompt: prompt.trim(), initialThinking: thinkingMode },
+    });
   };
 
   return (
@@ -73,7 +79,7 @@ export const LandingPage: React.FC = () => {
         src="/background.png"
         alt="Pastoral Scenery Dither"
         className="fixed inset-0 w-full h-full object-cover pointer-events-none -z-10 select-none"
-        style={{ imageRendering: 'pixelated' }}
+        style={{ imageRendering: "pixelated" }}
       />
 
       {/* Hanging Island Navbar */}
@@ -101,7 +107,7 @@ export const LandingPage: React.FC = () => {
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 handleSubmit();
               }
@@ -136,7 +142,7 @@ export const LandingPage: React.FC = () => {
                     size={15}
                     strokeWidth={2}
                     className={`text-[#475569] transition-transform duration-200 ${
-                      dropdownOpen ? 'rotate-180' : ''
+                      dropdownOpen ? "rotate-180" : ""
                     }`}
                   />
                 </button>
@@ -171,8 +177,8 @@ export const LandingPage: React.FC = () => {
                 onClick={() => setThinkingMode((prev) => !prev)}
                 className={`h-9 px-4 rounded-xl active:scale-95 text-[13.5px] font-medium transition-all duration-150 cursor-pointer border ${
                   thinkingMode
-                    ? 'bg-[#EBF3FC] text-[#0E3A75] border-[#9EC1EA] font-semibold shadow-2xs'
-                    : 'bg-[#F1F4F9] hover:bg-[#E4EBF5] text-[#0F1B33] border-transparent'
+                    ? "bg-[#EBF3FC] text-[#0E3A75] border-[#9EC1EA] font-semibold shadow-2xs"
+                    : "bg-[#F1F4F9] hover:bg-[#E4EBF5] text-[#0F1B33] border-transparent"
                 }`}
               >
                 Think
@@ -183,15 +189,15 @@ export const LandingPage: React.FC = () => {
                 disabled={!prompt.trim() || isSubmitting}
                 className={`w-9 h-9 rounded-full bg-[#0E3A75] hover:bg-[#092854] text-white flex items-center justify-center transition-all duration-200 shadow-sm cursor-pointer ${
                   prompt.trim()
-                    ? 'scale-105 shadow-md shadow-blue-950/25 hover:scale-110 active:scale-95'
-                    : 'opacity-95 hover:scale-105'
+                    ? "scale-105 shadow-md shadow-blue-950/25 hover:scale-110 active:scale-95"
+                    : "opacity-95 hover:scale-105"
                 }`}
               >
                 <ArrowUp
                   size={17}
                   strokeWidth={2.3}
                   className={`transition-transform duration-200 ${
-                    isSubmitting ? '-translate-y-1 animate-bounce' : ''
+                    isSubmitting ? "-translate-y-1 animate-bounce" : ""
                   }`}
                 />
               </button>

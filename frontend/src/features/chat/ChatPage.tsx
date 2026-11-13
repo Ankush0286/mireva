@@ -492,10 +492,18 @@ export const ChatPage: React.FC<ChatPageProps> = ({
   );
 
   useEffect(() => {
-    const passedPrompt = (location.state as any)?.initialPrompt;
+    const navState = location.state as {
+      initialPrompt?: string;
+      initialThinking?: boolean;
+    } | null;
+    const passedPrompt = navState?.initialPrompt;
     if (passedPrompt && !initialPromptHandled.current) {
       initialPromptHandled.current = true;
-      handleSendMessage(passedPrompt);
+      handleSendMessage(
+        passedPrompt,
+        undefined,
+        Boolean(navState?.initialThinking),
+      );
       window.history.replaceState({}, document.title);
     }
   }, [location.state, handleSendMessage]);

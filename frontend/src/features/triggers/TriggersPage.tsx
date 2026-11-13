@@ -305,7 +305,7 @@ export const TriggersPage: React.FC = () => {
   const [handlePlatform, setHandlePlatform] = useState<PlatformType>("twitter");
   const [handleUsername, setHandleUsername] = useState("");
   const [handleDisplayName, setHandleDisplayName] = useState("");
-  const [handleFreq, setHandleFreq] = useState(30);
+  const [handleFreq, setHandleFreq] = useState(180);
 
   // Rule Modal
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
@@ -398,7 +398,7 @@ export const TriggersPage: React.FC = () => {
     setHandlePlatform("twitter");
     setHandleUsername("");
     setHandleDisplayName("");
-    setHandleFreq(30);
+    setHandleFreq(180);
     setFormError(null);
     setIsHandleModalOpen(true);
   };

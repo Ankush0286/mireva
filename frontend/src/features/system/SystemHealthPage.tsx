@@ -120,7 +120,11 @@ export const SystemHealthPage: React.FC = () => {
 
   const runWorkerMutation = useMutation({
     mutationFn: (
-      worker: "post_dispatcher" | "watcher_worker" | "quota_reset_worker",
+      worker:
+        | "post_dispatcher"
+        | "dm_dispatcher"
+        | "watcher_worker"
+        | "quota_reset_worker",
     ) => api.system.runWorker(worker),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.system.all });
@@ -146,7 +150,11 @@ export const SystemHealthPage: React.FC = () => {
   };
 
   const handleTriggerWorker = (
-    worker: "post_dispatcher" | "watcher_worker" | "quota_reset_worker",
+    worker:
+      | "post_dispatcher"
+      | "dm_dispatcher"
+      | "watcher_worker"
+      | "quota_reset_worker",
   ) => {
     setRunningWorker(worker);
     runWorkerMutation.mutate(worker);
@@ -448,6 +456,12 @@ export const SystemHealthPage: React.FC = () => {
                   name: "Scheduled Post Dispatcher",
                   interval: "Every 30 seconds",
                   desc: "Polls due posts and dispatches via platform adapters.",
+                },
+                {
+                  id: "dm_dispatcher",
+                  name: "Cold DM Dispatcher",
+                  interval: "Every 60 seconds",
+                  desc: "Dispatches human-approved cold DMs within daily safety limits.",
                 },
                 {
                   id: "watcher_worker",
