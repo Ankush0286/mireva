@@ -462,3 +462,31 @@ async def test_strategist_heartbeat_worker_and_review_digest(
     await db_session.refresh(state)
     assert state.cycle_count == 1
     assert state.status == StrategistStatus.SLEEPING
+
+
+@pytest.mark.anyio
+async def test_quota_reset_worker_skips_recent_dm_counters(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    account_service = AccountService(db_session)
+    mock_sync = AsyncMock()
+    monkeypatch.setattr("app.automation.workers.quota_reset_worker.sync_replica", mock_sync)
+
+    account = await account_service.create_account(
+        CreateAccountCommand(
+            platform=PlatformType.TWITTER,
+            handle="recent_dm_bot",
+            daily_post_limit=10,
+            daily_dm_limit=15,
+        )
+    )
+    account.daily_posts_sent = 0
+    account.daily_dms_sent = 4
+    account.daily_counters_reset_at = datetime.now(UTC) - timedelta(hours=1)
+    await db_session.commit()
+
+    reset_count = await run_quota_reset_worker(db=db_session)
+    assert reset_count == 0
+
+    await db_session.refresh(account)
+    assert account.daily_dms_sent == 4

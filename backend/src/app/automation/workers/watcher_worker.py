@@ -41,9 +41,14 @@ async def run_watcher_worker(db: AsyncSession | None = None) -> int:
         for handle in watched_handles:
             # Check scraping frequency interval
             if handle.last_scraped_at:
+                last_scraped = (
+                    handle.last_scraped_at.replace(tzinfo=UTC)
+                    if handle.last_scraped_at.tzinfo is None
+                    else handle.last_scraped_at
+                )
                 jitter = random.randint(-10, 25)
                 effective_frequency = max(30, handle.scrape_frequency_minutes + jitter)
-                cutoff = handle.last_scraped_at + timedelta(minutes=effective_frequency)
+                cutoff = last_scraped + timedelta(minutes=effective_frequency)
                 if now < cutoff:
                     continue
 

@@ -141,6 +141,7 @@ async def publish_post_now(
     Hardened publishing: Checks quotas and marks publishing in quick transaction,
     executes browser adapter outside the DB lock, and saves results in fresh scope.
     """
+    post_uuid: UUID | None = None
     try:
         post_uuid = UUID(post_id)
 
@@ -207,14 +208,15 @@ async def publish_post_now(
             }
 
     except Exception as exc:
-        try:
-            async with ctx.deps.db_session_scope() as db:
-                service = CampaignService(db)
-                await service.record_failure(
-                    RecordPostFailureCommand(post_id=post_uuid, error_message=str(exc))
-                )
-        except Exception:
-            pass
+        if post_uuid is not None:
+            try:
+                async with ctx.deps.db_session_scope() as db:
+                    service = CampaignService(db)
+                    await service.record_failure(
+                        RecordPostFailureCommand(post_id=post_uuid, error_message=str(exc))
+                    )
+            except Exception:
+                pass
         return {"error": f"Failed to publish post: {exc}"}
 
 

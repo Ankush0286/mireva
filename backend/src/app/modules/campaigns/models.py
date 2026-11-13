@@ -77,9 +77,21 @@ class Campaign(AuditBase):
         if self.status != CampaignStatus.ACTIVE:
             return False
         now = datetime.now(UTC)
-        if self.start_date and now < self.start_date:
-            return False
-        return not (self.end_date and now > self.end_date)
+        if self.start_date:
+            start = (
+                self.start_date.replace(tzinfo=UTC)
+                if self.start_date.tzinfo is None
+                else self.start_date
+            )
+            if now < start:
+                return False
+        if self.end_date:
+            end = (
+                self.end_date.replace(tzinfo=UTC) if self.end_date.tzinfo is None else self.end_date
+            )
+            if now > end:
+                return False
+        return True
 
 
 class ScheduledPost(AuditBase):
