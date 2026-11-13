@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+early_access: false
+
+reviews:
+  profile: "chill" # Switch to "assertive" for stricter nitpicks
+  request_changes_workflow: false
+  high_level_summary: true
+  sequence_diagrams: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT MERGE"
+    base_branches:
+      - master
+      - main
+      - develop
+
+  path_filters:
+    - "!**/__pycache__/**"
+    - "!**/*.pyc"
+    - "!**/node_modules/**"
+    - "!**/dist/**"
+    - "!backend/storage/browser_sessions/**"
+    - "!backend/storage/logs/**"
+    - "!backend/storage/media/**"
+
+  path_instructions:
+    - path: "backend/**"
+      instructions: |
+        Python 3.12 + FastAPI + async SQLAlchemy + Pydantic AI + Playwright.
+        Enforce:
+        - Encrypted fields (encrypted_*) and plaintext secrets must never appear in Pydantic response schemas or logs.
+        - Long-running browser or external API operations must not hold open SQLAlchemy sessions or locks.
+        - Datetime comparisons against UTC-aware timestamps must normalize naive datetimes first.
+        - Follow project domain exception hierarchy (NotFoundError, ConflictError, AppError) and ruff/mypy strictness.
+    - path: "frontend/**"
+      instructions: |
+        React 19 + TypeScript + Vite + Tailwind CSS v4 + TanStack Query v5.
+        Enforce:
+        - Mutations should invalidate relevant queryKeys cleanly.
+        - Modals must portal cleanly if overlaid above fixed sidebars and maintain accessible controls.
+        - Keep TypeScript types strict and avoid oxlint warnings.
+    - path: "services/browser-bridge/**"
+      instructions: |
+        Go 1.25 + Gin + Gorilla WebSocket + chromedp.
+        Enforce:
+        - Check for goroutine/context leaks, race conditions, and synchronized WebSocket writes.
+        - Verify Docker Compose vs local loopback networking assumptions.
+
+chat:
+  auto_reply: true
