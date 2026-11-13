@@ -99,6 +99,28 @@ def _normalize_tool_args(raw_args: Any) -> dict[str, Any]:
     return {"arguments": str(parsed)}
 
 
+def _infer_tool_status(output_result: Any) -> tuple[ToolExecutionStatus, str | None]:
+    if isinstance(output_result, dict) and isinstance(output_result.get("error"), str):
+        return ToolExecutionStatus.ERROR, output_result["error"]
+    return ToolExecutionStatus.SUCCESS, None
+
+
+def _serialize_tools(tools: list[ToolExecutionLog]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": str(t.id),
+            "tool_name": t.tool_name,
+            "input_arguments": t.input_arguments,
+            "output_result": t.output_result,
+            "status": t.status.value,
+            "execution_time_ms": t.execution_time_ms,
+            "error_message": t.error_message,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+        }
+        for t in tools
+    ]
+
+
 async def _record_tool_traces(
     copilot_service: CopilotService,
     session_id: UUID,
@@ -125,7 +147,13 @@ async def _record_tool_traces(
     recorded_logs: list[ToolExecutionLog] = []
 
     for call in tool_calls:
+        has_return = bool(call.tool_call_id and call.tool_call_id in tool_returns)
         output_result = tool_returns.get(call.tool_call_id) if call.tool_call_id else None
+        if has_return:
+            status, error_message = _infer_tool_status(output_result)
+        else:
+            status, error_message = ToolExecutionStatus.PENDING, None
+
         clean_args = _normalize_tool_args(call.args)
 
         log = await copilot_service.log_tool_execution(
@@ -134,8 +162,9 @@ async def _record_tool_traces(
                 tool_name=call.tool_name,
                 input_arguments=clean_args,
                 output_result=output_result,
-                status=ToolExecutionStatus.SUCCESS,
+                status=status,
                 execution_time_ms=elapsed_ms,
+                error_message=error_message,
                 extra_metadata={"tool_call_id": call.tool_call_id} if call.tool_call_id else {},
             )
         )
@@ -271,25 +300,13 @@ async def stream_agent_turn(
                 )
                 if new_tools:
                     recorded_tools.extend(new_tools)
-                    tools_payload = [
-                        {
-                            "id": str(t.id),
-                            "tool_name": t.tool_name,
-                            "input_arguments": t.input_arguments,
-                            "output_result": t.output_result,
-                            "status": t.status.value,
-                            "execution_time_ms": t.execution_time_ms,
-                            "created_at": t.created_at.isoformat() if t.created_at else None,
-                        }
-                        for t in recorded_tools
-                    ]
-                    yield {"__event__": "tools", "tools": tools_payload}
+                    yield {"__event__": "tools", "tools": _serialize_tools(recorded_tools)}
                 step_start = time.perf_counter()
 
         assistant_reply = str(agent_run.result.output) if agent_run.result else ""
         run_usage = agent_run.usage
 
-        # Correlate tool outputs from completed run messages
+        # Correlate tool outputs from completed run messages and re-emit final tool states
         if agent_run.result:
             all_returns: dict[str, Any] = {}
             for msg in agent_run.result.new_messages():
@@ -300,11 +317,20 @@ async def stream_agent_turn(
                         case _:
                             pass
 
+            updated_any = False
             for tool_log in recorded_tools:
                 meta = tool_log.extra_metadata or {}
                 tool_call_id = meta.get("tool_call_id")
                 if isinstance(tool_call_id, str) and tool_call_id in all_returns:
-                    tool_log.output_result = all_returns[tool_call_id]
+                    output_val = all_returns[tool_call_id]
+                    tool_log.output_result = output_val
+                    inferred_status, inferred_err = _infer_tool_status(output_val)
+                    tool_log.status = inferred_status
+                    tool_log.error_message = inferred_err
+                    updated_any = True
+
+            if updated_any:
+                yield {"__event__": "tools", "tools": _serialize_tools(recorded_tools)}
 
     # 4. Stream response words with organic micro-delays
     words = assistant_reply.split(" ")

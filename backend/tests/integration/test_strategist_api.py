@@ -136,3 +136,30 @@ async def test_reply_when_not_waiting_returns_409(client: AsyncClient) -> None:
     )
     assert res.status_code == 409
     assert res.json()["error"] == "CONFLICT"
+
+
+@pytest.mark.anyio
+async def test_reply_recovers_from_running_on_turn_failure(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    service = StrategistService(db_session)
+    await service.record_human_blocker(
+        urgency="high",
+        question="Which niche should we test next?",
+    )
+
+    with patch(
+        "app.modules.strategist.router.run_agent_turn",
+        new=AsyncMock(side_effect=RuntimeError("Upstream LLM timeout")),
+    ):
+        res = await client.post(
+            "/api/v1/strategist/reply",
+            json={"reply": "Try developer tools."},
+        )
+        assert res.status_code == 500
+
+    state_res = await client.get("/api/v1/strategist/state")
+    assert state_res.status_code == 200
+    assert state_res.json()["status"] == "sleeping"

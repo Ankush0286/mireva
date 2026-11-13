@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import urllib.request
@@ -48,3 +49,8 @@ def resolve_media_path(media_input: str) -> Path:
         raise FileNotFoundError(f"Media file does not exist: {clean_input}")
 
     return local_path
+
+
+async def aresolve_media_path(media_input: str) -> Path:
+    """Async wrapper preventing remote media downloads from blocking the event loop."""
+    return await asyncio.to_thread(resolve_media_path, media_input)
