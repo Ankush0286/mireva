@@ -1,6 +1,9 @@
 import asyncio
 import hashlib
 import logging
+import os
+import tempfile
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -8,6 +11,18 @@ logger = logging.getLogger(__name__)
 
 MEDIA_DIR = Path("storage/media").resolve()
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+
+_locks_guard = threading.Lock()
+_download_locks: dict[str, threading.Lock] = {}
+
+
+def _get_url_lock(url_hash: str) -> threading.Lock:
+    with _locks_guard:
+        lock = _download_locks.get(url_hash)
+        if lock is None:
+            lock = threading.Lock()
+            _download_locks[url_hash] = lock
+        return lock
 
 
 def resolve_media_path(media_input: str) -> Path:
@@ -17,7 +32,7 @@ def resolve_media_path(media_input: str) -> Path:
     """
     clean_input = media_input.strip()
 
-    # 1. Handle Remote Image URLs
+    # 1. Handle Remote Image URLs (serialized per URL + atomic temp-file publish)
     if clean_input.startswith(("http://", "https://")):
         url_hash = hashlib.md5(clean_input.encode("utf-8")).hexdigest()[:12]
         ext = ".jpg"
@@ -30,14 +45,30 @@ def resolve_media_path(media_input: str) -> Path:
             ext = ".mp4"
 
         local_file = MEDIA_DIR / f"downloaded_{url_hash}{ext}"
-        if not local_file.exists():
-            logger.info(
-                "Downloading remote media to local cache: %s -> %s", clean_input, local_file
-            )
-            headers = {"User-Agent": "Mozilla/5.0"}
-            req = urllib.request.Request(clean_input, headers=headers)
-            with urllib.request.urlopen(req, timeout=20) as resp, open(local_file, "wb") as f:
-                f.write(resp.read())
+        url_lock = _get_url_lock(url_hash)
+
+        with url_lock:
+            if not local_file.exists() or local_file.stat().st_size == 0:
+                logger.info(
+                    "Downloading remote media to local cache: %s -> %s", clean_input, local_file
+                )
+                headers = {"User-Agent": "Mozilla/5.0"}
+                req = urllib.request.Request(clean_input, headers=headers)
+                MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+                fd, tmp_name = tempfile.mkstemp(
+                    prefix=f".tmp_{url_hash}_", suffix=ext, dir=str(MEDIA_DIR)
+                )
+                tmp_path = Path(tmp_name)
+                try:
+                    with (
+                        os.fdopen(fd, "wb") as f,
+                        urllib.request.urlopen(req, timeout=20) as resp,
+                    ):
+                        f.write(resp.read())
+                    os.replace(tmp_path, local_file)
+                except BaseException:
+                    tmp_path.unlink(missing_ok=True)
+                    raise
         return local_file
 
     # 2. Handle Local File Paths

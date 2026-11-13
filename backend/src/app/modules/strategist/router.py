@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -166,10 +167,10 @@ async def reply_to_agent(
                 state.current_step = "Resting until next scheduled cycle."
                 state.last_cycle_completed_at = datetime.now(UTC)
                 await db.commit()
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             await db.rollback()
             refreshed = await service.get_or_create_state()
-            if refreshed.status != StrategistStatus.PAUSED:
+            if refreshed.status == StrategistStatus.RUNNING:
                 refreshed.status = StrategistStatus.SLEEPING
                 refreshed.next_cycle_at = datetime.now(UTC) + timedelta(minutes=30)
                 refreshed.sleep_rationale = f"Reply handling error ({exc}). Retrying in 30 minutes."

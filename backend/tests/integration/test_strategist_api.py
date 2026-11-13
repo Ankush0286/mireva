@@ -163,3 +163,41 @@ async def test_reply_recovers_from_running_on_turn_failure(
     state_res = await client.get("/api/v1/strategist/state")
     assert state_res.status_code == 200
     assert state_res.json()["status"] == "sleeping"
+
+
+@pytest.mark.anyio
+async def test_reply_preserves_new_human_blocker_if_turn_fails_later(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    from unittest.mock import patch
+
+    service = StrategistService(db_session)
+    await service.record_human_blocker(
+        urgency="medium",
+        question="Initial question?",
+    )
+
+    async def _commit_new_blocker_then_fail(**kwargs: object) -> None:
+        _ = kwargs
+        await service.record_human_blocker(
+            urgency="high",
+            question="New 2FA checkpoint required",
+        )
+        await db_session.commit()
+        raise RuntimeError("Downstream step failed after blocker committed")
+
+    with patch(
+        "app.modules.strategist.router.run_agent_turn",
+        side_effect=_commit_new_blocker_then_fail,
+    ):
+        res = await client.post(
+            "/api/v1/strategist/reply",
+            json={"reply": "Proceed"},
+        )
+        assert res.status_code == 500
+
+    state_res = await client.get("/api/v1/strategist/state")
+    assert state_res.status_code == 200
+    data = state_res.json()
+    assert data["status"] == "waiting_for_human"
+    assert data["pending_question"] == "New 2FA checkpoint required"
