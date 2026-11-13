@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import PlatformType, TriggerActionType, TriggerMatchStatus
+from app.common.exceptions import ConflictError
 from app.modules.accounts.commands import CreateAccountCommand
 from app.modules.accounts.exceptions import AccountNotFoundError
 from app.modules.accounts.models import ConnectedAccount
@@ -524,4 +525,36 @@ async def test_update_rule_clearing_all_keywords_raises(db_session: AsyncSession
                 keywords_any=[],
                 keywords_all=[],
             )
+        )
+
+
+@pytest.mark.anyio
+async def test_dispatched_trigger_match_cannot_be_re_reviewed(db_session: AsyncSession):
+    """Verifies that an already dispatched match cannot be modified via review_match."""
+    account = await _create_sample_account(db_session, "trig_guard_bot")
+    trig_service = TriggerService(db_session)
+
+    await trig_service.create_rule(
+        CreateTriggerRuleCommand(
+            name="Guard Rule",
+            platform=PlatformType.TWITTER,
+            account_id=account.id,
+            keywords_any=["pricing"],
+        )
+    )
+    matches = await trig_service.evaluate_incoming_post(
+        EvaluateIncomingPostCommand(
+            platform=PlatformType.TWITTER,
+            platform_post_id="post_1",
+            author_handle="user1",
+            post_content="pricing question",
+        )
+    )
+    match = matches[0]
+    match.mark_as_dispatched("reply_id_123")
+    await db_session.commit()
+
+    with pytest.raises(ConflictError):
+        await trig_service.review_match(
+            ReviewMatchCommand(match_id=match.id, status=TriggerMatchStatus.IGNORED)
         )

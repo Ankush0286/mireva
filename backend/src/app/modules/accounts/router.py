@@ -1,5 +1,4 @@
 import logging
-from pathlib import Path
 from uuid import UUID
 
 from fastapi import (
@@ -10,6 +9,7 @@ from fastapi import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.exceptions import AppError
 from app.db.dependencies import get_db_session
 from app.modules.accounts.schemas import (
     AccountCreateRequest,
@@ -17,6 +17,7 @@ from app.modules.accounts.schemas import (
     AccountUpdateRequest,
 )
 from app.modules.accounts.service import AccountService
+from app.platforms.browser.session_manager import BrowserSessionManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -110,15 +111,10 @@ async def verify_browser_session(
 ) -> AccountResponse:
     account = await service.get_by_id_or_raise(account_id)
 
-    # Check if Go Bridge successfully wrote the cookies to disk
-    storage_dir = Path("storage/browser_sessions") / str(account.id)
-    storage_path = storage_dir / "storage_state.json"
-
-    if not storage_path.exists():
-        from app.common.exceptions import AppError
-
+    session_mgr = BrowserSessionManager()
+    if not session_mgr.has_stored_session(account.id):
         raise AppError("No session cookies were saved. Please try logging in again.")
 
-    # Mark authenticated in PostgreSQL
+    storage_path = session_mgr.get_storage_state_path(account.id)
     updated = await service.mark_browser_session_authenticated(account.id, storage_path)
     return AccountResponse.model_validate(updated)

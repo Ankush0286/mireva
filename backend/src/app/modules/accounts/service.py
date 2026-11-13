@@ -15,6 +15,7 @@ from app.modules.accounts.exceptions import (
     DailyPostQuotaExceededError,
 )
 from app.modules.accounts.models import ConnectedAccount
+from app.modules.outreach.exceptions import DailyDMQuotaExceededError
 
 
 def _ensure_uuid(val: UUID | str) -> UUID:
@@ -31,7 +32,14 @@ class AccountService:
         target_id = _ensure_uuid(account_id)
         stmt = select(ConnectedAccount).where(ConnectedAccount.id == target_id)
         result = await self.db.execute(stmt)
-        return result.scalars().first()
+        account = result.scalars().first()
+        if account:
+            reset = account._check_and_reset_daily_quotas()
+            cd_reset = account._check_and_reset_cooldown()
+            if reset or cd_reset:
+                await self.db.commit()
+                await self.db.refresh(account)
+        return account
 
     async def get_by_id_or_raise(self, account_id: UUID | str) -> ConnectedAccount:
         account = await self.get_by_id(account_id)
@@ -47,14 +55,35 @@ class AccountService:
             ConnectedAccount.handle == handle,
         )
         result = await self.db.execute(stmt)
-        return result.scalars().first()
+        account = result.scalars().first()
+        if account:
+            reset = account._check_and_reset_daily_quotas()
+            cd_reset = account._check_and_reset_cooldown()
+            if reset or cd_reset:
+                await self.db.commit()
+                await self.db.refresh(account)
+        return account
 
-    async def list_accounts(self, active_only: bool = False) -> list[ConnectedAccount]:
+    async def list_accounts(
+        self, active_only: bool = False, auto_reset: bool = True
+    ) -> list[ConnectedAccount]:
         stmt = select(ConnectedAccount).order_by(ConnectedAccount.created_at.desc())
         if active_only:
             stmt = stmt.where(ConnectedAccount.is_active.is_(True))
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        accounts = list(result.scalars().all())
+        if auto_reset:
+            any_reset = False
+            for acc in accounts:
+                if acc._check_and_reset_daily_quotas():
+                    any_reset = True
+                if acc._check_and_reset_cooldown():
+                    any_reset = True
+            if any_reset:
+                await self.db.commit()
+                for acc in accounts:
+                    await self.db.refresh(acc)
+        return accounts
 
     # ================= Command / Mutation Methods =================
 
@@ -158,7 +187,14 @@ class AccountService:
 
     async def record_dm_activity(self, account_id: UUID | str) -> ConnectedAccount:
         account = await self.get_by_id_or_raise(account_id)
-        account._check_and_reset_daily_quotas()
+
+        if account.is_in_cooldown():
+            until_str = account.cooldown_until.isoformat() if account.cooldown_until else "unknown"
+            raise AccountInCooldownError(account.handle, until_str)
+
+        if not account.can_send_dm_today():
+            raise DailyDMQuotaExceededError(account.handle, account.daily_dm_limit)
+
         account.daily_dms_sent += 1
         account.last_action_at = datetime.now(UTC)
 

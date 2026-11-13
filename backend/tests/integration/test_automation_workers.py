@@ -37,6 +37,7 @@ from app.modules.accounts.service import AccountService
 from app.modules.campaigns.commands import (
     CreateCampaignCommand,
     QueuePostCommand,
+    UpdateCampaignCommand,
 )
 from app.modules.campaigns.service import CampaignService
 from app.modules.history.service import HistoryService
@@ -490,3 +491,90 @@ async def test_quota_reset_worker_skips_recent_dm_counters(
 
     await db_session.refresh(account)
     assert account.daily_dms_sent == 4
+
+
+@pytest.mark.anyio
+async def test_resumed_strategist_wakes_on_heartbeat(db_session: AsyncSession):
+    """Verifies that unpausing the strategist allows the heartbeat worker to wake it."""
+    service = StrategistService(db_session)
+    await service.toggle_pause()
+    resumed = await service.toggle_pause()
+
+    assert resumed.status == StrategistStatus.IDLE
+    assert resumed.next_cycle_at is not None
+
+    mock_model = TestModel(call_tools=["sleep"], custom_output_text="Cycle complete.")
+    with marketing_agent.override(model=mock_model):
+        ran = await run_strategist_heartbeat(db=db_session)
+
+    assert ran == 1
+
+
+@pytest.mark.anyio
+async def test_paused_campaign_does_not_publish_posts(db_session: AsyncSession):
+    """Verifies that post_dispatcher skips posts belonging to paused campaigns."""
+    acc_service = AccountService(db_session)
+    camp_service = CampaignService(db_session)
+
+    account = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="pause_camp_bot")
+    )
+    await account_throttler.reset(account.id)
+
+    campaign = await camp_service.create_campaign(
+        CreateCampaignCommand(name="Summer Promo", status=CampaignStatus.ACTIVE)
+    )
+    await camp_service.queue_post(
+        QueuePostCommand(
+            campaign_id=campaign.id,
+            account_id=account.id,
+            content="Should NOT go live while campaign is paused",
+            scheduled_at=datetime.now(UTC) - timedelta(minutes=5),
+            status=PostStatus.SCHEDULED,
+        )
+    )
+
+    await camp_service.update_campaign(
+        UpdateCampaignCommand(campaign_id=campaign.id, status=CampaignStatus.PAUSED)
+    )
+
+    dispatched = await run_post_dispatcher(db=db_session)
+    assert dispatched == 0
+
+
+@pytest.mark.anyio
+async def test_dm_not_stuck_as_dispatched_on_worker_cancellation(db_session: AsyncSession):
+    """Verifies task cancellation during DM send fails gracefully instead of staying DISPATCHED."""
+    acc_service = AccountService(db_session)
+    outreach_service = OutreachService(db_session)
+
+    account = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="cancel_dm_bot")
+    )
+    await account_throttler.reset(account.id)
+
+    lead = await outreach_service.create_lead(
+        CreateLeadCommand(platform=PlatformType.TWITTER, handle="target_founder")
+    )
+    msg = await outreach_service.stage_message(
+        StageMessageCommand(lead_id=lead.id, account_id=account.id, content="Hello!")
+    )
+    await outreach_service.review_message(
+        ReviewMessageCommand(message_id=msg.id, status=OutreachMessageStatus.APPROVED)
+    )
+
+    mock_adapter = MagicMock()
+    mock_adapter.send_dm = AsyncMock(side_effect=asyncio.CancelledError("Container shutting down"))
+    mock_adapter.close = AsyncMock()
+
+    with (
+        patch(
+            "app.automation.workers.dm_dispatcher.PlatformRegistry.get_adapter",
+            return_value=mock_adapter,
+        ),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await run_dm_dispatcher(db=db_session)
+
+    refreshed = await outreach_service.get_message_by_id_or_raise(msg.id)
+    assert refreshed.status == OutreachMessageStatus.FAILED

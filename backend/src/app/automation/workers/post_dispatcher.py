@@ -5,7 +5,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.automation.throttler import account_throttler
-from app.common.enums import ActivitySeverity, ActivityType, PostStatus
+from app.common.enums import ActivitySeverity, ActivityType, CampaignStatus, PostStatus
 from app.db.session import async_session_factory
 from app.modules.accounts.service import AccountService
 from app.modules.campaigns.commands import (
@@ -50,7 +50,20 @@ async def _dispatch_single_post(
     post_id = post.id
     account_id = account.id
 
-    # 1. Quota & Cooldown Safety Guards
+    # Quota, Cooldown & Campaign Safety Guards
+    if post.campaign and post.campaign.status in (
+        CampaignStatus.PAUSED,
+        CampaignStatus.ARCHIVED,
+        CampaignStatus.COMPLETED,
+    ):
+        logger.warning(
+            "Campaign '%s' is %s. Skipping post %s.",
+            post.campaign.name,
+            post.campaign.status.value,
+            post_id,
+        )
+        return False
+
     if not account.can_post_today():
         reason = (
             "Account is paused (is_active=False)"

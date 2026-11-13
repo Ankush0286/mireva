@@ -149,10 +149,21 @@ class CampaignService:
         now = datetime.now(UTC)
         stmt = (
             select(ScheduledPost)
-            .options(selectinload(ScheduledPost.account))
+            .join(Campaign, ScheduledPost.campaign_id == Campaign.id)
+            .options(
+                selectinload(ScheduledPost.account),
+                selectinload(ScheduledPost.campaign),
+            )
             .where(
                 ScheduledPost.status == PostStatus.SCHEDULED,
                 ScheduledPost.scheduled_at <= now,
+                Campaign.status.notin_(
+                    [
+                        CampaignStatus.PAUSED,
+                        CampaignStatus.ARCHIVED,
+                        CampaignStatus.COMPLETED,
+                    ]
+                ),
             )
             .order_by(ScheduledPost.scheduled_at.asc())
             .limit(limit)
@@ -163,7 +174,11 @@ class CampaignService:
     async def queue_post(self, cmd: QueuePostCommand) -> ScheduledPost:
         campaign = await self.get_campaign_by_id_or_raise(cmd.campaign_id)
 
-        if campaign.status in (CampaignStatus.ARCHIVED, CampaignStatus.COMPLETED):
+        if campaign.status in (
+            CampaignStatus.ARCHIVED,
+            CampaignStatus.COMPLETED,
+            CampaignStatus.PAUSED,
+        ):
             raise CampaignInactiveError(campaign.id, campaign.status.value)
 
         acc_stmt = select(ConnectedAccount).where(ConnectedAccount.id == cmd.account_id)

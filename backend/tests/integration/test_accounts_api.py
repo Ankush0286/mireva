@@ -1,5 +1,13 @@
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.common.enums import PlatformType
+from app.modules.accounts.commands import CreateAccountCommand
+from app.modules.accounts.service import AccountService
 
 
 @pytest.mark.anyio
@@ -124,3 +132,44 @@ async def test_invalid_payload_returns_422(client: AsyncClient):
     response = await client.post("/api/v1/accounts/", json=payload)
     assert response.status_code == 422
     assert response.json()["error"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.anyio
+async def test_verify_session_rejects_empty_cookie_file(client: AsyncClient):
+    """POST /session/verify rejects storage_state.json when 0 cookies exist."""
+    res = await client.post(
+        "/api/v1/accounts/",
+        json={"platform": "instagram", "handle": "empty_cookie_bot"},
+    )
+    account_id = res.json()["id"]
+
+    storage_dir = Path("storage/browser_sessions") / account_id
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    storage_file = storage_dir / "storage_state.json"
+    storage_file.write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+
+    try:
+        verify_res = await client.post(f"/api/v1/accounts/{account_id}/session/verify")
+        assert verify_res.status_code == 400
+        assert "No session cookies were saved" in verify_res.json()["detail"]
+    finally:
+        storage_file.unlink(missing_ok=True)
+        storage_dir.rmdir()
+
+
+@pytest.mark.anyio
+async def test_get_account_api_resets_expired_24h_quotas(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """GET /accounts/{id} auto-resets stale counters if 24 hours elapsed."""
+    service = AccountService(db_session)
+    account = await service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="stale_ui_bot")
+    )
+    account.daily_posts_sent = 7
+    account.daily_counters_reset_at = datetime.now(UTC) - timedelta(hours=26)
+    await db_session.commit()
+
+    res = await client.get(f"/api/v1/accounts/{account.id}")
+    assert res.status_code == 200
+    assert res.json()["daily_posts_sent"] == 0

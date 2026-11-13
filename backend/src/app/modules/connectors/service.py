@@ -13,6 +13,7 @@ from app.modules.connectors.commands import (
 from app.modules.connectors.exceptions import (
     ConnectorAlreadyExistsError,
     ConnectorNotFoundError,
+    ConnectorRateLimitError,
     InvalidConnectorConfigError,
 )
 from app.modules.connectors.models import DataConnector
@@ -160,6 +161,10 @@ class ConnectorService:
                 )
             await self.db.commit()
             return is_valid
+        except ConnectorRateLimitError as rle:
+            connector.mark_rate_limited(str(rle))
+            await self.db.commit()
+            raise
         except Exception as exc:
             connector.mark_error(str(exc), is_auth_error=True)
             await self.db.commit()
@@ -188,6 +193,10 @@ class ConnectorService:
             await self.db.commit()
 
             return [MetricOpportunityItem(**item) for item in raw_opps]
+        except ConnectorRateLimitError as rle:
+            connector.mark_rate_limited(str(rle))
+            await self.db.commit()
+            raise
         except Exception as exc:
             connector.mark_error(str(exc))
             await self.db.commit()

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.enums import PlatformType, TriggerMatchStatus
+from app.common.exceptions import ConflictError
 from app.modules.accounts.exceptions import AccountNotFoundError
 from app.modules.accounts.models import ConnectedAccount
 from app.modules.triggers.commands import (
@@ -215,12 +216,10 @@ class TriggerService:
             rule.keywords_all = [k.lower().strip() for k in cmd.keywords_all if k.strip()]
         if cmd.keywords_exclude is not None:
             rule.keywords_exclude = [k.lower().strip() for k in cmd.keywords_exclude if k.strip()]
-
         if not rule.keywords_any and not rule.keywords_all:
             raise InvalidTriggerRuleError(
                 "Rule requires at least one keyword in keywords_any or keywords_all."
             )
-
         if cmd.response_template is not None:
             rule.response_template = cmd.response_template
         if cmd.cooldown_minutes is not None:
@@ -372,6 +371,11 @@ class TriggerService:
 
     async def review_match(self, cmd: ReviewMatchCommand) -> TriggerMatch:
         match = await self.get_match_by_id_or_raise(cmd.match_id)
+
+        if match.status not in (TriggerMatchStatus.PENDING_REVIEW, TriggerMatchStatus.APPROVED):
+            raise ConflictError(
+                f"Trigger match '{match.id}' has already been processed ({match.status.value})."
+            )
 
         if cmd.status == TriggerMatchStatus.APPROVED:
             match.mark_as_approved(response_text=cmd.edited_response)

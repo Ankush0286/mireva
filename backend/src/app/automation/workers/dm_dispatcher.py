@@ -125,7 +125,7 @@ async def _dispatch_single_dm(
         )
         return True
 
-    except Exception as exc:
+    except BaseException as exc:
         logger.error(
             "Failed to dispatch cold DM %s to @%s: %s",
             message_id,
@@ -134,24 +134,30 @@ async def _dispatch_single_dm(
             exc_info=True,
         )
         await db.rollback()
-        await outreach_service.record_failure(
-            RecordMessageFailureCommand(
-                message_id=message_id,
-                error_message=str(exc),
+        try:
+            await outreach_service.record_failure(
+                RecordMessageFailureCommand(
+                    message_id=message_id,
+                    error_message=str(exc) or type(exc).__name__,
+                )
             )
-        )
-        await history_service.log_activity(
-            LogActivityCommand(
-                activity_type=ActivityType.MESSAGE_REJECTED,
-                severity=ActivitySeverity.ERROR,
-                title=f"Cold DM delivery failed on {account_platform}",
-                description=str(exc),
-                entity_type="outreach_message",
-                entity_id=message_id,
-                actor="dm_dispatcher",
+            await history_service.log_activity(
+                LogActivityCommand(
+                    activity_type=ActivityType.MESSAGE_REJECTED,
+                    severity=ActivitySeverity.ERROR,
+                    title=f"Cold DM delivery failed on {account_platform}",
+                    description=str(exc) or type(exc).__name__,
+                    entity_type="outreach_message",
+                    entity_id=message_id,
+                    actor="dm_dispatcher",
+                )
             )
-        )
-        return False
+        except Exception:
+            pass
+
+        if isinstance(exc, Exception):
+            return False
+        raise
 
 
 async def run_dm_dispatcher(db: AsyncSession | None = None) -> int:

@@ -102,6 +102,7 @@ class ConnectedAccount(AuditBase):
     def can_post_today(self) -> bool:
         """Checks if the account is within its safe daily posting limits."""
         self._check_and_reset_daily_quotas()
+        self._check_and_reset_cooldown()
         if not self.is_active or self.status != AccountStatus.ACTIVE:
             return False
         if self.is_in_cooldown():
@@ -111,6 +112,7 @@ class ConnectedAccount(AuditBase):
     def can_send_dm_today(self) -> bool:
         """Checks if the account is within its safe outbound cold DM limits."""
         self._check_and_reset_daily_quotas()
+        self._check_and_reset_cooldown()
         if not self.is_active or self.status != AccountStatus.ACTIVE:
             return False
         if self.is_in_cooldown():
@@ -128,12 +130,20 @@ class ConnectedAccount(AuditBase):
         )
         return datetime.now(UTC) < cooldown
 
-    def _check_and_reset_daily_quotas(self) -> None:
+    def _check_and_reset_cooldown(self) -> bool:
+        """Restores ACTIVE status if rate_limited cooldown period has expired."""
+        if self.status == AccountStatus.RATE_LIMITED and not self.is_in_cooldown():
+            self.status = AccountStatus.ACTIVE
+            self.cooldown_until = None
+            return True
+        return False
+
+    def _check_and_reset_daily_quotas(self) -> bool:
         """Resets counters if 24 hours have elapsed since the last reset."""
         now = datetime.now(UTC)
         if not self.daily_counters_reset_at:
             self.daily_counters_reset_at = now
-            return
+            return False
 
         reset_at = (
             self.daily_counters_reset_at.replace(tzinfo=UTC)
@@ -145,3 +155,5 @@ class ConnectedAccount(AuditBase):
             self.daily_posts_sent = 0
             self.daily_dms_sent = 0
             self.daily_counters_reset_at = now
+            return True
+        return False

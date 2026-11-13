@@ -124,6 +124,11 @@ class DataConnector(AuditBase):
         self.status = ConnectorStatus.CONNECTED
         self.last_error_message = None
 
+    def mark_rate_limited(self, error: str) -> None:
+        """Logs rate limit error and updates status."""
+        self.last_error_message = error
+        self.status = ConnectorStatus.RATE_LIMITED
+
     def mark_error(self, error: str, is_auth_error: bool = False) -> None:
         """Logs diagnostic error and updates status."""
         self.last_error_message = error
