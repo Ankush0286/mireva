@@ -1,9 +1,10 @@
 services:
-  caddy:
+  frontend:
+    image: ghcr.io/ankush0286/mireva-frontend:latest
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: mireva-caddy
+    container_name: mireva-frontend
     restart: unless-stopped
     ports:
       - "80:80"
@@ -27,6 +28,7 @@ services:
         max-file: "3"
 
   backend:
+    image: ghcr.io/ankush0286/mireva-backend:latest
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -56,6 +58,7 @@ services:
         max-file: "3"
 
   browser-bridge:
+    image: ghcr.io/ankush0286/mireva-bridge:latest
     build:
       context: ./services/browser-bridge
       dockerfile: Dockerfile
@@ -86,4 +89,3 @@ volumes:
   mireva-storage:
   caddy_data:
   caddy_config:
-    
