@@ -6,12 +6,12 @@ import (
 )
 
 type Config struct {
-	Port         string
-	BindAddr     string
-	GinMode      string
-	IsHeadless   bool
-	StorageDir   string
-	MediaDir     string
+	Port       string
+	BindAddr   string
+	GinMode    string
+	IsHeadless bool
+	StorageDir string
+	MediaDir   string
 }
 
 func Load() *Config {
@@ -25,6 +25,11 @@ func Load() *Config {
 		ginMode = "release"
 	}
 
+	host := os.Getenv("BRIDGE_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
 	isHeadless := os.Getenv("BRIDGE_HEADLESS") != "false"
 
 	storageDir := resolveStorageDir()
@@ -32,7 +37,7 @@ func Load() *Config {
 
 	return &Config{
 		Port:       port,
-		BindAddr:   "127.0.0.1:" + port, // Safe loopback binding
+		BindAddr:   host + ":" + port,
 		GinMode:    ginMode,
 		IsHeadless: isHeadless,
 		StorageDir: storageDir,

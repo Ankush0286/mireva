@@ -59,3 +59,13 @@ func TestMessageSerialization(t *testing.T) {
 	assert.Equal(t, "click", inMsg.Type)
 	assert.Equal(t, 640, inMsg.X)
 }
+
+func TestConfigBindAddr(t *testing.T) {
+	defaultCfg := config.Load()
+	assert.Equal(t, "127.0.0.1:8080", defaultCfg.BindAddr)
+
+	t.Setenv("BRIDGE_HOST", "0.0.0.0")
+	t.Setenv("BRIDGE_PORT", "9090")
+	containerCfg := config.Load()
+	assert.Equal(t, "0.0.0.0:9090", containerCfg.BindAddr)
+}

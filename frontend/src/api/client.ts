@@ -1416,7 +1416,11 @@ export const api = {
       ),
 
     runWorker: (
-      workerName: "post_dispatcher" | "watcher_worker" | "quota_reset_worker",
+      workerName:
+        | "post_dispatcher"
+        | "dm_dispatcher"
+        | "watcher_worker"
+        | "quota_reset_worker",
     ) =>
       request<WorkerTriggerResponse>(
         `/api/v1/system/workers/${workerName}/run`,
