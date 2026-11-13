@@ -237,54 +237,72 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 	_ = ws.SendJSON(model.ServerOutboundMessage{Type: "navigated", URL: targetURL})
 	_ = ws.SendJSON(model.ServerOutboundMessage{Type: "status", Message: "Ready"})
 
+	inputCtx, cancelInput := context.WithCancel(taskCtx)
+	defer cancelInput()
+
 	inputCh := make(chan model.ClientInboundMessage, 128)
 	var inputWG sync.WaitGroup
 	inputWG.Add(1)
 	go func() {
 		defer inputWG.Done()
+		withInputTimeout := func(fn func(context.Context)) {
+			cCtx, cancel := context.WithTimeout(inputCtx, 5*time.Second)
+			defer cancel()
+			fn(cCtx)
+		}
+
 		dispatchKey := func(k, code string, vk, mod int64, commands []string) {
-			_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
-				Type:                  input.DispatchKeyEventTypeRawKeyDown,
-				Key:                   k,
-				Code:                  code,
-				WindowsVirtualKeyCode: vk,
-				NativeVirtualKeyCode:  vk,
-				Modifiers:             mod,
-				Commands:              commands,
-			})
-			_, _ = chromedp.Call(taskCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
-				Type:                  input.DispatchKeyEventTypeKeyUp,
-				Key:                   k,
-				Code:                  code,
-				WindowsVirtualKeyCode: vk,
-				NativeVirtualKeyCode:  vk,
-				Modifiers:             mod,
+			withInputTimeout(func(cCtx context.Context) {
+				_, _ = chromedp.Call(cCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+					Type:                  input.DispatchKeyEventTypeRawKeyDown,
+					Key:                   k,
+					Code:                  code,
+					WindowsVirtualKeyCode: vk,
+					NativeVirtualKeyCode:  vk,
+					Modifiers:             mod,
+					Commands:              commands,
+				})
+				_, _ = chromedp.Call(cCtx, input.DispatchKeyEvent, input.DispatchKeyEventParams{
+					Type:                  input.DispatchKeyEventTypeKeyUp,
+					Key:                   k,
+					Code:                  code,
+					WindowsVirtualKeyCode: vk,
+					NativeVirtualKeyCode:  vk,
+					Modifiers:             mod,
+				})
 			})
 		}
 
 		for inMsg := range inputCh {
+			if inputCtx.Err() != nil {
+				return
+			}
 			switch inMsg.Type {
 			case "click":
 				x, y := float64(inMsg.X), float64(inMsg.Y)
-				_, _ = chromedp.Call(taskCtx, input.DispatchMouseEvent, input.DispatchMouseEventParams{
-					Type:       input.DispatchMouseEventTypeMousePressed,
-					X:          x,
-					Y:          y,
-					Button:     input.MouseButtonLeft,
-					ClickCount: 1,
-				})
-				time.Sleep(30 * time.Millisecond)
-				_, _ = chromedp.Call(taskCtx, input.DispatchMouseEvent, input.DispatchMouseEventParams{
-					Type:       input.DispatchMouseEventTypeMouseReleased,
-					X:          x,
-					Y:          y,
-					Button:     input.MouseButtonLeft,
-					ClickCount: 1,
+				withInputTimeout(func(cCtx context.Context) {
+					_, _ = chromedp.Call(cCtx, input.DispatchMouseEvent, input.DispatchMouseEventParams{
+						Type:       input.DispatchMouseEventTypeMousePressed,
+						X:          x,
+						Y:          y,
+						Button:     input.MouseButtonLeft,
+						ClickCount: 1,
+					})
+					time.Sleep(30 * time.Millisecond)
+					_, _ = chromedp.Call(cCtx, input.DispatchMouseEvent, input.DispatchMouseEventParams{
+						Type:       input.DispatchMouseEventTypeMouseReleased,
+						X:          x,
+						Y:          y,
+						Button:     input.MouseButtonLeft,
+						ClickCount: 1,
+					})
 				})
 
 			case "type":
-				_, _ = chromedp.Call(taskCtx, input.InsertText, input.InsertTextParams{
-					Text: inMsg.Text,
+				withInputTimeout(func(cCtx context.Context) {
+					_, _ = chromedp.Call(cCtx, input.InsertText, input.InsertTextParams{
+						Text: inMsg.Text,
+					})
 				})
 
 			case "key":
@@ -312,8 +330,10 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 					dispatchKey("a", "KeyA", 65, 2, []string{"selectAll"})
 				default:
 					if len([]rune(key)) == 1 {
-						_, _ = chromedp.Call(taskCtx, input.InsertText, input.InsertTextParams{
-							Text: key,
+						withInputTimeout(func(cCtx context.Context) {
+							_, _ = chromedp.Call(cCtx, input.InsertText, input.InsertTextParams{
+								Text: key,
+							})
 						})
 					}
 				}
@@ -338,8 +358,7 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 		case "click", "type", "key":
 			select {
 			case inputCh <- inMsg:
-			default:
-				log.Printf("[Bridge] Warning: input queue full, dropping %s event", inMsg.Type)
+			case <-inputCtx.Done():
 			}
 
 		case "navigate":
@@ -387,6 +406,7 @@ func (s *BrowserService) runStream(ws *SafeWS, sessionDir, storageStatePath, tar
 		}
 	}
 
+	cancelInput()
 	close(inputCh)
 	inputWG.Wait()
 

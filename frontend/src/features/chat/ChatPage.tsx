@@ -397,7 +397,11 @@ export const ChatPage: React.FC<ChatPageProps> = ({
         turnTools: [],
       };
 
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      const preRequestIds = new Set<string>();
+      setMessages((prev) => {
+        prev.forEach((m) => preRequestIds.add(m.id));
+        return [...prev, userMsg, assistantMsg];
+      });
 
       let firstTokenRecorded = false;
 
@@ -427,12 +431,18 @@ export const ChatPage: React.FC<ChatPageProps> = ({
             if (m.id === userMsgId && m.id.startsWith("user-")) {
               if (
                 lastMsg.role === "assistant" &&
+                !preRequestIds.has(lastMsg.id) &&
                 secondLastMsg?.role === "user" &&
+                !preRequestIds.has(secondLastMsg.id) &&
                 secondLastMsg.content === textToSend
               ) {
                 return { ...m, id: secondLastMsg.id };
               }
-              if (lastMsg.role === "user" && lastMsg.content === textToSend) {
+              if (
+                lastMsg.role === "user" &&
+                !preRequestIds.has(lastMsg.id) &&
+                lastMsg.content === textToSend
+              ) {
                 return { ...m, id: lastMsg.id };
               }
             }
@@ -440,7 +450,9 @@ export const ChatPage: React.FC<ChatPageProps> = ({
               m.id === assistantMsgId &&
               m.id.startsWith("assistant-") &&
               lastMsg.role === "assistant" &&
+              !preRequestIds.has(lastMsg.id) &&
               secondLastMsg?.role === "user" &&
+              !preRequestIds.has(secondLastMsg.id) &&
               secondLastMsg.content === textToSend
             ) {
               return { ...m, id: lastMsg.id };
