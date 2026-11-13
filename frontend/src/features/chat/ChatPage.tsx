@@ -460,6 +460,30 @@ export const ChatPage: React.FC<ChatPageProps> = ({
           },
         );
 
+        const persisted = await api.copilot
+          .getMessages(targetSessionId)
+          .catch(() => null);
+        if (persisted && persisted.length >= 2) {
+          const dbAssistant = persisted[persisted.length - 1];
+          const dbUser = persisted[persisted.length - 2];
+          setMessages((prev) => {
+            if (prev.length < 2) return prev;
+            const updated = [...prev];
+            const aIdx = updated.length - 1;
+            const uIdx = updated.length - 2;
+            if (updated[uIdx].role === "user" && dbUser.role === "user") {
+              updated[uIdx] = { ...updated[uIdx], id: dbUser.id };
+            }
+            if (
+              updated[aIdx].role === "assistant" &&
+              dbAssistant.role === "assistant"
+            ) {
+              updated[aIdx] = { ...updated[aIdx], id: dbAssistant.id };
+            }
+            return updated;
+          });
+        }
+
         queryClient.invalidateQueries({ queryKey: queryKeys.copilot.sessions });
         queryClient.invalidateQueries({
           queryKey: queryKeys.copilot.messages(targetSessionId),
@@ -579,7 +603,10 @@ export const ChatPage: React.FC<ChatPageProps> = ({
           await api.triggers.reviewMatch(entityId, { status: "approved" });
           queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all });
         } else if (actionType === "publish_post" && entityId) {
-          await api.campaigns.updatePost(entityId, { status: "scheduled" });
+          await api.campaigns.updatePost(entityId, {
+            status: "scheduled",
+            scheduled_at: getIsoTimestamp(),
+          });
           queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
         }
 
@@ -608,6 +635,13 @@ export const ChatPage: React.FC<ChatPageProps> = ({
       if (msg.role === "assistant" && msg.turnTools) {
         for (const tool of msg.turnTools) {
           if (tool.tool_name === "request_human_approval") {
+            const res = parseToolResult(tool.output_result);
+            if (
+              res &&
+              (res.approval_required === false || res.auto_approved === true)
+            ) {
+              continue;
+            }
             const decision = decisions[tool.id];
             if (!decision) {
               return tool;

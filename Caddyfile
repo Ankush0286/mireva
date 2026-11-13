@@ -41,6 +41,20 @@
         }
     }
 
+    handle /docs* {
+        reverse_proxy backend:8000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    handle /openapi.json {
+        reverse_proxy backend:8000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
     handle /ws/* {
         reverse_proxy browser-bridge:8080 {
             header_up Host {host}
