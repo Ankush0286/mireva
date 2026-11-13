@@ -12,7 +12,6 @@ from pydantic_ai.models import Model
 from pydantic_ai.usage import RunUsage
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Ensure all tool decorators register on marketing_agent
 from app.agent import tools as _registered_tools  # noqa: F401
 from app.agent.llm import AgentDeps, get_openrouter_model, marketing_agent
 from app.common.enums import ChatRole, ToolExecutionStatus
@@ -57,7 +56,6 @@ def _apply_thinking_directive(user_prompt: str, thinking: bool) -> str:
 
 
 def _extract_run_usage(usage: RunUsage | None, model_id: str | None) -> dict[str, Any]:
-    """Calculates token metrics and costs directly from Pydantic AI's RunUsage property."""
     if usage is None:
         return calculate_usage_metrics(model_id, 0, 0)
 
@@ -69,10 +67,6 @@ def _extract_run_usage(usage: RunUsage | None, model_id: str | None) -> dict[str
 
 
 def _normalize_tool_args(raw_args: Any) -> dict[str, Any]:
-    """
-    Normalizes tool call arguments into a clean dictionary.
-    Unwraps escaped JSON strings if the LLM passed arguments nested under an 'arguments' key.
-    """
     parsed: Any
     if isinstance(raw_args, str):
         try:
@@ -99,16 +93,34 @@ def _normalize_tool_args(raw_args: Any) -> dict[str, Any]:
     return {"arguments": str(parsed)}
 
 
+def _infer_tool_status(output_result: Any) -> tuple[ToolExecutionStatus, str | None]:
+    if isinstance(output_result, dict) and isinstance(output_result.get("error"), str):
+        return ToolExecutionStatus.ERROR, output_result["error"]
+    return ToolExecutionStatus.SUCCESS, None
+
+
+def _serialize_tools(tools: list[ToolExecutionLog]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": str(t.id),
+            "tool_name": t.tool_name,
+            "input_arguments": t.input_arguments,
+            "output_result": t.output_result,
+            "status": t.status.value,
+            "execution_time_ms": t.execution_time_ms,
+            "error_message": t.error_message,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+        }
+        for t in tools
+    ]
+
+
 async def _record_tool_traces(
     copilot_service: CopilotService,
     session_id: UUID,
     messages: list[ModelMessage],
     elapsed_ms: int,
 ) -> list[ToolExecutionLog]:
-    """
-    Pairs ToolCallPart with ToolReturnPart using Python 3.12 structural
-    pattern matching on Pydantic AI's discriminated union message parts.
-    """
     tool_returns: dict[str, Any] = {}
     tool_calls: list[ToolCallPart] = []
 
@@ -125,7 +137,13 @@ async def _record_tool_traces(
     recorded_logs: list[ToolExecutionLog] = []
 
     for call in tool_calls:
+        has_return = bool(call.tool_call_id and call.tool_call_id in tool_returns)
         output_result = tool_returns.get(call.tool_call_id) if call.tool_call_id else None
+        if has_return:
+            status, error_message = _infer_tool_status(output_result)
+        else:
+            status, error_message = ToolExecutionStatus.PENDING, None
+
         clean_args = _normalize_tool_args(call.args)
 
         log = await copilot_service.log_tool_execution(
@@ -134,8 +152,9 @@ async def _record_tool_traces(
                 tool_name=call.tool_name,
                 input_arguments=clean_args,
                 output_result=output_result,
-                status=ToolExecutionStatus.SUCCESS,
+                status=status,
                 execution_time_ms=elapsed_ms,
+                error_message=error_message,
                 extra_metadata={"tool_call_id": call.tool_call_id} if call.tool_call_id else {},
             )
         )
@@ -152,11 +171,8 @@ async def run_agent_turn(
     thinking: bool = False,
 ) -> ChatMessage:
     copilot_service = CopilotService(db)
-
-    # 1. Fetch prior conversation context
     prior_context = await copilot_service.get_conversation_context(session_id, max_messages=20)
 
-    # 2. Persist User Message
     await copilot_service.add_message(
         AddChatMessageCommand(
             session_id=session_id,
@@ -165,7 +181,6 @@ async def run_agent_turn(
         )
     )
 
-    # 3. Resolve Model & Dependencies
     deps = AgentDeps(db=db, session_id=session_id)
     resolved_model: Model | None = None
     if isinstance(model_override, str):
@@ -176,7 +191,6 @@ async def run_agent_turn(
     effective_prompt = _apply_thinking_directive(user_prompt, thinking)
     contextualized_prompt = _build_prompt_with_history(prior_context, effective_prompt)
 
-    # 4. Run Agent Turn
     logger.info("Executing Agent Turn in Session %s (thinking=%s)...", session_id, thinking)
     start_time = time.perf_counter()
 
@@ -187,7 +201,6 @@ async def run_agent_turn(
     )
     elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
-    # 5. Record Tool Execution Traces (typed match over message parts)
     recorded_tools = await _record_tool_traces(
         copilot_service=copilot_service,
         session_id=session_id,
@@ -195,7 +208,6 @@ async def run_agent_turn(
         elapsed_ms=elapsed_ms,
     )
 
-    # 6. Extract Usage Directly from Property & Persist Assistant Message
     assistant_reply = str(result.output)
     model_label = (
         model_override if isinstance(model_override, str) else agent_settings.DEFAULT_MODEL
@@ -213,7 +225,6 @@ async def run_agent_turn(
         )
     )
 
-    # 7. Associate recorded tool logs with this assistant message
     for tool_log in recorded_tools:
         tool_log.message_id = assistant_msg.id
     await db.commit()
@@ -231,7 +242,6 @@ async def stream_agent_turn(
     copilot_service = CopilotService(db)
     prior_context = await copilot_service.get_conversation_context(session_id, max_messages=20)
 
-    # 1. Persist User Message
     await copilot_service.add_message(
         AddChatMessageCommand(
             session_id=session_id,
@@ -240,7 +250,6 @@ async def stream_agent_turn(
         )
     )
 
-    # 2. Resolve Model & Dependencies
     deps = AgentDeps(db=db, session_id=session_id)
     resolved_model: Model | None = None
     if isinstance(model_override, str):
@@ -254,59 +263,82 @@ async def stream_agent_turn(
     recorded_tools: list[ToolExecutionLog] = []
     step_start = time.perf_counter()
 
-    # 3. Stream Iteration Loop
-    async with marketing_agent.iter(
-        contextualized_prompt,
-        deps=deps,
-        model=resolved_model,
-    ) as agent_run:
-        async for node in agent_run:
-            if Agent.is_call_tools_node(node):
-                step_ms = int((time.perf_counter() - step_start) * 1000)
-                new_tools = await _record_tool_traces(
-                    copilot_service=copilot_service,
-                    session_id=session_id,
-                    messages=[node.model_response],
-                    elapsed_ms=step_ms,
-                )
-                if new_tools:
-                    recorded_tools.extend(new_tools)
-                    tools_payload = [
-                        {
-                            "id": str(t.id),
-                            "tool_name": t.tool_name,
-                            "input_arguments": t.input_arguments,
-                            "output_result": t.output_result,
-                            "status": t.status.value,
-                            "execution_time_ms": t.execution_time_ms,
-                            "created_at": t.created_at.isoformat() if t.created_at else None,
-                        }
-                        for t in recorded_tools
-                    ]
-                    yield {"__event__": "tools", "tools": tools_payload}
-                step_start = time.perf_counter()
+    try:
+        async with marketing_agent.iter(
+            contextualized_prompt,
+            deps=deps,
+            model=resolved_model,
+        ) as agent_run:
+            async for node in agent_run:
+                if Agent.is_call_tools_node(node):
+                    step_ms = int((time.perf_counter() - step_start) * 1000)
+                    new_tools = await _record_tool_traces(
+                        copilot_service=copilot_service,
+                        session_id=session_id,
+                        messages=[node.model_response],
+                        elapsed_ms=step_ms,
+                    )
+                    if new_tools:
+                        recorded_tools.extend(new_tools)
+                        yield {"__event__": "tools", "tools": _serialize_tools(recorded_tools)}
+                    step_start = time.perf_counter()
 
-        assistant_reply = str(agent_run.result.output) if agent_run.result else ""
-        run_usage = agent_run.usage
+            assistant_reply = str(agent_run.result.output) if agent_run.result else ""
+            run_usage = agent_run.usage
 
-        # Correlate tool outputs from completed run messages
-        if agent_run.result:
-            all_returns: dict[str, Any] = {}
-            for msg in agent_run.result.new_messages():
-                for part in msg.parts:
-                    match part:
-                        case ToolReturnPart(tool_call_id=ret_id, content=content) if ret_id:
-                            all_returns[ret_id] = content
-                        case _:
-                            pass
+            if agent_run.result:
+                all_returns: dict[str, Any] = {}
+                retry_errors: dict[str, str] = {}
+                for msg in agent_run.result.new_messages():
+                    for part in msg.parts:
+                        match part:
+                            case ToolReturnPart(tool_call_id=ret_id, content=content) if ret_id:
+                                all_returns[ret_id] = content
+                            case _ if getattr(part, "part_kind", None) == "retry-prompt":
+                                retry_call_id = getattr(part, "tool_call_id", None)
+                                if isinstance(retry_call_id, str) and retry_call_id:
+                                    retry_errors[retry_call_id] = str(
+                                        getattr(part, "content", "Tool call retried")
+                                    )
+                            case _:
+                                pass
 
-            for tool_log in recorded_tools:
-                meta = tool_log.extra_metadata or {}
-                tool_call_id = meta.get("tool_call_id")
-                if isinstance(tool_call_id, str) and tool_call_id in all_returns:
-                    tool_log.output_result = all_returns[tool_call_id]
+                updated_any = False
+                for tool_log in recorded_tools:
+                    meta = tool_log.extra_metadata or {}
+                    tool_call_id = meta.get("tool_call_id")
+                    if isinstance(tool_call_id, str) and tool_call_id in all_returns:
+                        output_val = all_returns[tool_call_id]
+                        tool_log.output_result = output_val
+                        inferred_status, inferred_err = _infer_tool_status(output_val)
+                        tool_log.status = inferred_status
+                        tool_log.error_message = inferred_err
+                        updated_any = True
+                    elif isinstance(tool_call_id, str) and tool_call_id in retry_errors:
+                        err_msg = retry_errors[tool_call_id]
+                        tool_log.output_result = {"error": err_msg}
+                        tool_log.status = ToolExecutionStatus.ERROR
+                        tool_log.error_message = err_msg
+                        updated_any = True
+                    elif tool_log.status == ToolExecutionStatus.PENDING:
+                        tool_log.status = ToolExecutionStatus.ERROR
+                        tool_log.error_message = "Tool call did not return a result."
+                        updated_any = True
 
-    # 4. Stream response words with organic micro-delays
+                if updated_any:
+                    yield {"__event__": "tools", "tools": _serialize_tools(recorded_tools)}
+    except BaseException as exc:
+        err_text = str(exc) or type(exc).__name__
+        for tool_log in recorded_tools:
+            if tool_log.status == ToolExecutionStatus.PENDING:
+                tool_log.status = ToolExecutionStatus.ERROR
+                tool_log.error_message = err_text
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+        raise
+
     words = assistant_reply.split(" ")
     for i, word in enumerate(words):
         chunk = word if i == 0 else " " + word
@@ -321,10 +353,8 @@ async def stream_agent_turn(
     )
     usage_metrics = _extract_run_usage(run_usage, model_label)
 
-    # 5. Emit live usage event over SSE for UsageMeter
     yield {"__event__": "usage", "usage": usage_metrics}
 
-    # 6. Persist Assistant Message in Database with exact token telemetry
     assistant_msg = await copilot_service.add_message(
         AddChatMessageCommand(
             session_id=session_id,
@@ -336,7 +366,6 @@ async def stream_agent_turn(
         )
     )
 
-    # 7. Foreign-key link recorded tools to assistant message
     for tool_log in recorded_tools:
         tool_log.message_id = assistant_msg.id
     await db.commit()

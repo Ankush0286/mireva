@@ -5,6 +5,7 @@ from typing import Any
 from playwright.async_api import Page
 
 from app.platforms.browser.human_behavior import human_type, random_delay
+from app.platforms.media_utils import aresolve_media_path
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +72,7 @@ class ActionRecipeRunner:
                         f"Upload step missing variable '{step.get('variable')}'"
                     )
 
-                from app.platforms.media_utils import resolve_media_path
-
-                resolved_file = resolve_media_path(str(file_path))
+                resolved_file = await aresolve_media_path(str(file_path))
                 file_input = self.page.locator(target_selector).first
 
                 # Check if input is rendered or needs clicking a trigger button

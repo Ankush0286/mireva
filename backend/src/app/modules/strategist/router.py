@@ -1,3 +1,5 @@
+import asyncio
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
@@ -145,13 +147,37 @@ async def reply_to_agent(
             f"{payload.reply.strip()}\n\n"
             "Proceed with your actions based on this guidance, then call `sleep(duration_minutes, rationale)`."
         )
-        await run_agent_turn(
-            db=db,
-            session_id=state.session_id,
-            user_prompt=prompt,
-            model_override=active_model,
-            thinking=True,
-        )
+        try:
+            await run_agent_turn(
+                db=db,
+                session_id=state.session_id,
+                user_prompt=prompt,
+                model_override=active_model,
+                thinking=True,
+            )
+            await db.refresh(state)
+            await service._sync_cycle_count(state)
+
+            if state.status == StrategistStatus.RUNNING:
+                state.status = StrategistStatus.SLEEPING
+                state.next_cycle_at = datetime.now(UTC) + timedelta(minutes=60)
+                state.sleep_rationale = (
+                    "Processed operator guidance. Resting 60m before next check."
+                )
+                state.current_step = "Resting until next scheduled cycle."
+                state.last_cycle_completed_at = datetime.now(UTC)
+                await db.commit()
+        except (Exception, asyncio.CancelledError) as exc:
+            await db.rollback()
+            refreshed = await service.get_or_create_state()
+            if refreshed.status == StrategistStatus.RUNNING:
+                refreshed.status = StrategistStatus.SLEEPING
+                refreshed.next_cycle_at = datetime.now(UTC) + timedelta(minutes=30)
+                refreshed.sleep_rationale = f"Reply handling error ({exc}). Retrying in 30 minutes."
+                refreshed.current_step = "Recovering from error; scheduled retry in 30m."
+                await db.commit()
+            await service._sync_cycle_count(refreshed)
+            raise
 
     await db.refresh(state)
     return StrategistStateResponse.model_validate(state)

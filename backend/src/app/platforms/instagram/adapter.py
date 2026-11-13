@@ -21,7 +21,7 @@ from app.platforms.browser.human_behavior import (
 )
 from app.platforms.browser.session_manager import BrowserSessionManager
 from app.platforms.instagram import selectors
-from app.platforms.media_utils import resolve_media_path
+from app.platforms.media_utils import aresolve_media_path
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,7 @@ class InstagramAdapter(BasePlatformAdapter):
         if not media_paths:
             raise ValueError("Instagram requires at least one media file (image/video) to publish.")
 
-        valid_media_path = resolve_media_path(media_paths[0])
+        valid_media_path = await aresolve_media_path(media_paths[0])
 
         if not valid_media_path.exists():
             raise FileNotFoundError(f"Media file does not exist: {valid_media_path}")

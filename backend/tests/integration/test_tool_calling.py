@@ -215,3 +215,43 @@ async def test_stream_agent_turn_persists_streamed_response_and_usage(
     assert messages[1].content == full_text
     assert messages[1].token_count is not None
     assert "usage" in messages[1].extra_metadata
+
+
+@pytest.mark.anyio
+async def test_stream_agent_turn_emits_completed_tool_outputs(
+    db_session: AsyncSession,
+) -> None:
+    """Verifies stream_agent_turn re-emits tools with populated output_result and status."""
+    account_service = AccountService(db_session)
+    copilot_service = CopilotService(db_session)
+
+    await account_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="stream_tool_bot")
+    )
+    session = await copilot_service.create_session(
+        CreateChatSessionCommand(title="Stream Tool Output Session")
+    )
+
+    deterministic_model = TestModel(
+        call_tools=["get_connected_accounts"],
+        custom_output_text="Checked your @stream_tool_bot account.",
+    )
+
+    tool_events: list[list[dict[str, object]]] = []
+    async for item in stream_agent_turn(
+        db=db_session,
+        session_id=session.id,
+        user_prompt="List my connected accounts",
+        model_override=deterministic_model,
+    ):
+        if isinstance(item, dict) and item.get("__event__") == "tools":
+            tools_list = item.get("tools")
+            if isinstance(tools_list, list):
+                tool_events.append(tools_list)
+
+    assert len(tool_events) >= 2
+    final_tools = tool_events[-1]
+    assert len(final_tools) == 1
+    assert final_tools[0]["tool_name"] == "get_connected_accounts"
+    assert final_tools[0]["status"] == "success"
+    assert final_tools[0]["output_result"] is not None
