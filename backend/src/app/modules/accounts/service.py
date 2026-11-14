@@ -213,22 +213,26 @@ class AccountService:
         await self.db.refresh(account)
         return account
 
-    async def reserve_dm_slot(self, account_id: UUID | str) -> bool:
+    async def reserve_dm_slot(self, account_id: UUID | str) -> datetime | None:
         """
         Atomically checks cooldown and daily quota, and reserves a slot
         by incrementing daily_dms_sent before dispatch only if below daily_dm_limit.
+        Returns the account's daily_counters_reset_at quota period if reserved,
+        or None if reservation was rejected.
         """
         target_id = _ensure_uuid(account_id)
         account = await self.get_by_id_or_raise(target_id)
         if account.is_in_cooldown() or not account.can_send_dm_today():
-            return False
+            return None
 
+        current_period = account.daily_counters_reset_at
         stmt = (
             update(ConnectedAccount)
             .where(
                 ConnectedAccount.id == target_id,
                 ConnectedAccount.is_active.is_(True),
                 ConnectedAccount.status == AccountStatus.ACTIVE,
+                ConnectedAccount.daily_counters_reset_at == current_period,
                 ConnectedAccount.daily_dms_sent < ConnectedAccount.daily_dm_limit,
             )
             .values(
@@ -239,22 +243,31 @@ class AccountService:
         )
         res = await self.db.execute(stmt)
         await self.db.commit()
-        return getattr(res, "rowcount", 0) > 0
+        if getattr(res, "rowcount", 0) > 0:
+            return current_period
+        return None
 
-    async def release_dm_slot(self, account_id: UUID | str) -> None:
-        """Releases a previously reserved quota slot if dispatch failed."""
+    async def release_dm_slot(self, account_id: UUID | str, period: datetime | None = None) -> bool:
+        """
+        Releases a previously reserved quota slot if dispatch failed.
+        Verifies that the quota period still matches before decrementing
+        so a reset from a new day is never decremented.
+        """
         target_id = _ensure_uuid(account_id)
-        stmt = (
-            update(ConnectedAccount)
-            .where(
-                ConnectedAccount.id == target_id,
-                ConnectedAccount.daily_dms_sent > 0,
-            )
-            .values(daily_dms_sent=ConnectedAccount.daily_dms_sent - 1)
-            .execution_options(synchronize_session=False)
+        stmt = update(ConnectedAccount).where(
+            ConnectedAccount.id == target_id,
+            ConnectedAccount.daily_dms_sent > 0,
         )
-        await self.db.execute(stmt)
+        if period is not None:
+            stmt = stmt.where(ConnectedAccount.daily_counters_reset_at == period)
+
+        stmt = stmt.values(daily_dms_sent=ConnectedAccount.daily_dms_sent - 1).execution_options(
+            synchronize_session=False
+        )
+
+        res = await self.db.execute(stmt)
         await self.db.commit()
+        return getattr(res, "rowcount", 0) > 0
 
     async def set_cooldown(self, account_id: UUID | str, until: datetime) -> ConnectedAccount:
         account = await self.get_by_id_or_raise(account_id)

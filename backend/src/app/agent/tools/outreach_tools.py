@@ -256,8 +256,8 @@ async def dispatch_dm_now(
                 )
 
             # Atomically reserve quota slot before launching external browser
-            reserved = await acc_service.reserve_dm_slot(msg.account_id)
-            if not reserved:
+            reserved_period = await acc_service.reserve_dm_slot(msg.account_id)
+            if reserved_period is None:
                 return {
                     "error": f"Account @{account.handle} has reached its daily limit of {account.daily_dm_limit} cold DMs or is in cooldown."
                 }
@@ -269,19 +269,21 @@ async def dispatch_dm_now(
 
         # Execute browser adapter outside the database lock
         send_succeeded = False
-        adapter = PlatformRegistry.get_adapter(account)
+        adapter = None
         try:
+            adapter = PlatformRegistry.get_adapter(account)
             thread_id = await adapter.send_dm(
                 recipient_handle=lead_handle,
                 message_text=content_to_send,
             )
             send_succeeded = True
         finally:
-            await adapter.close()
+            if adapter is not None:
+                await adapter.close()
             if not send_succeeded:
                 try:
                     async with ctx.deps.db_session_scope() as db:
-                        await AccountService(db).release_dm_slot(acc_id)
+                        await AccountService(db).release_dm_slot(acc_id, period=reserved_period)
                 except Exception:
                     pass
 

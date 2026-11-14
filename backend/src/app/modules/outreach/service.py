@@ -238,7 +238,9 @@ class OutreachService:
     # Outreach Message Staging & Human Review Gates
     # =========================================================================
 
-    async def get_message_by_id(self, message_id: UUID | str) -> OutreachMessage | None:
+    async def get_message_by_id(
+        self, message_id: UUID | str, populate_existing: bool = False
+    ) -> OutreachMessage | None:
         target_id = _ensure_uuid(message_id)
         stmt = (
             select(OutreachMessage)
@@ -248,6 +250,8 @@ class OutreachService:
             )
             .where(OutreachMessage.id == target_id)
         )
+        if populate_existing:
+            stmt = stmt.execution_options(populate_existing=True)
         result = await self.db.execute(stmt)
         return result.scalars().first()
 

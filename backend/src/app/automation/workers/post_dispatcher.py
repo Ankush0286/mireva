@@ -213,7 +213,7 @@ async def run_post_dispatcher(db: AsyncSession | None = None) -> int:
 
         for post_id in post_ids:
             try:
-                post = await campaign_service.get_post_by_id(post_id)
+                post = await campaign_service.get_post_by_id(post_id, populate_existing=True)
                 if not post or post.status != PostStatus.SCHEDULED:
                     continue
 

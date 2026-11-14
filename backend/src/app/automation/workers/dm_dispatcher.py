@@ -77,31 +77,30 @@ async def _dispatch_single_dm(
         logger.debug("DM %s was already dispatched or modified. Skipping.", message_id)
         return False
 
-    # 4. Atomically reserve daily DM quota slot before launching external browser
-    reserved = await account_service.reserve_dm_slot(account_id)
-    if not reserved:
-        logger.warning(
-            "Account @%s has reached its daily quota. Reverting claim for message %s.",
-            account.handle,
-            message_id,
-        )
-        await db.execute(
-            update(OutreachMessage)
-            .where(OutreachMessage.id == message_id)
-            .values(status=OutreachMessageStatus.APPROVED)
-        )
-        await db.commit()
-        return False
-
-    # Extract strings into memory
     recipient_handle = lead.handle
     message_text = message.content
     account_handle = account.handle
     account_platform = account.platform.value
 
-    # 4. Execute Platform Adapter
+    reserved_period = None
     remote_sent = False
     try:
+        # 4. Atomically reserve daily DM quota slot before launching external browser
+        reserved_period = await account_service.reserve_dm_slot(account_id)
+        if reserved_period is None:
+            logger.warning(
+                "Account @%s has reached its daily quota. Reverting claim for message %s.",
+                account.handle,
+                message_id,
+            )
+            await db.execute(
+                update(OutreachMessage)
+                .where(OutreachMessage.id == message_id)
+                .values(status=OutreachMessageStatus.APPROVED)
+            )
+            await db.commit()
+            return False
+
         adapter = PlatformRegistry.get_adapter(account)
         logger.info(
             "Dispatching cold DM %s via %s adapter to @%s...",
@@ -155,11 +154,16 @@ async def _dispatch_single_dm(
         await db.rollback()
 
         # Release the reserved quota slot if dispatch did not complete
-        if not remote_sent:
+        if reserved_period is not None and not remote_sent:
             try:
-                await account_service.release_dm_slot(account_id)
-            except Exception:
-                pass
+                await account_service.release_dm_slot(account_id, period=reserved_period)
+            except Exception as rel_err:
+                await db.rollback()
+                logger.error(
+                    "Failed to release DM slot for account %s: %s",
+                    account_id,
+                    rel_err,
+                )
 
         # Only transition to FAILED if the remote adapter did NOT complete the send
         if not remote_sent:
@@ -221,7 +225,7 @@ async def run_dm_dispatcher(db: AsyncSession | None = None) -> int:
 
         for message_id in message_ids:
             try:
-                msg = await outreach_service.get_message_by_id(message_id)
+                msg = await outreach_service.get_message_by_id(message_id, populate_existing=True)
                 if not msg or msg.status != OutreachMessageStatus.APPROVED:
                     continue
 

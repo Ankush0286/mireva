@@ -108,7 +108,9 @@ class CampaignService:
     # Scheduled Post Queries & Lifecycle Mutations
     # =========================================================================
 
-    async def get_post_by_id(self, post_id: UUID | str) -> ScheduledPost | None:
+    async def get_post_by_id(
+        self, post_id: UUID | str, populate_existing: bool = False
+    ) -> ScheduledPost | None:
         target_id = _ensure_uuid(post_id)
         stmt = (
             select(ScheduledPost)
@@ -118,6 +120,8 @@ class CampaignService:
             )
             .where(ScheduledPost.id == target_id)
         )
+        if populate_existing:
+            stmt = stmt.execution_options(populate_existing=True)
         result = await self.db.execute(stmt)
         return result.scalars().first()
 

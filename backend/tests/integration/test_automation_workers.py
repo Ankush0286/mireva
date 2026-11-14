@@ -38,6 +38,7 @@ from app.modules.campaigns.commands import (
     CreateCampaignCommand,
     QueuePostCommand,
     UpdateCampaignCommand,
+    UpdatePostCommand,
 )
 from app.modules.campaigns.service import CampaignService
 from app.modules.history.service import HistoryService
@@ -606,6 +607,7 @@ async def test_post_not_claimed_if_campaign_paused_during_throttle_wait(db_sessi
             status=PostStatus.SCHEDULED,
         )
     )
+    post_id = post.id
 
     async def _pause_campaign_during_wait(*args: object, **kwargs: object) -> bool:
         # Pause the campaign while worker is waiting in throttler
@@ -620,7 +622,7 @@ async def test_post_not_claimed_if_campaign_paused_during_throttle_wait(db_sessi
         dispatched = await run_post_dispatcher(db=db_session)
 
     assert dispatched == 0
-    refreshed_post = await camp_service.get_post_by_id_or_raise(post.id)
+    refreshed_post = await camp_service.get_post_by_id_or_raise(post_id)
     assert refreshed_post.status == PostStatus.SCHEDULED
 
 
@@ -690,3 +692,73 @@ async def test_post_dispatcher_continues_batch_when_first_post_fails(db_session:
     refreshed_post2 = await camp_service.get_post_by_id_or_raise(post2.id)
     assert refreshed_post2.status == PostStatus.PUBLISHED
     assert refreshed_post2.platform_post_id == "post_2_success"
+
+
+@pytest.mark.anyio
+async def test_post_dispatcher_reloads_updated_content_in_batch(db_session: AsyncSession):
+    """
+    Verifies that if post2 is edited in another session while post1 is publishing,
+    the dispatcher reloads the updated content from the DB (populate_existing=True)
+    and dispatches the new copy.
+    """
+    acc_service = AccountService(db_session)
+    camp_service = CampaignService(db_session)
+
+    account1 = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="edit_race_bot_1")
+    )
+    account2 = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="edit_race_bot_2")
+    )
+    await account_throttler.reset(account1.id)
+    await account_throttler.reset(account2.id)
+
+    campaign = await camp_service.create_campaign(
+        CreateCampaignCommand(name="Edit Race Camp", status=CampaignStatus.ACTIVE)
+    )
+
+    await camp_service.queue_post(
+        QueuePostCommand(
+            campaign_id=campaign.id,
+            account_id=account1.id,
+            content="Post 1 initial",
+            scheduled_at=datetime.now(UTC) - timedelta(minutes=10),
+            status=PostStatus.SCHEDULED,
+        )
+    )
+    post2 = await camp_service.queue_post(
+        QueuePostCommand(
+            campaign_id=campaign.id,
+            account_id=account2.id,
+            content="Post 2 initial",
+            scheduled_at=datetime.now(UTC) - timedelta(minutes=5),
+            status=PostStatus.SCHEDULED,
+        )
+    )
+
+    published_contents = []
+
+    async def _mock_publish(content: str, media_paths: list[str] | None = None) -> PublishResult:
+        published_contents.append(content)
+        # While post 1 is publishing, edit post 2's content in a separate session
+        if len(published_contents) == 1:
+            from sqlalchemy.ext.asyncio import async_sessionmaker
+
+            factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+            async with factory() as other_session:
+                other_camp_service = CampaignService(other_session)
+                await other_camp_service.update_post(
+                    UpdatePostCommand(post_id=post2.id, content="Post 2 edited copy")
+                )
+        return PublishResult(platform_post_id=f"pub_{len(published_contents)}")
+
+    mock_adapter = MagicMock()
+    mock_adapter.publish_post = AsyncMock(side_effect=_mock_publish)
+    mock_adapter.close = AsyncMock()
+
+    with patch.object(PlatformRegistry, "get_adapter", return_value=mock_adapter):
+        dispatched = await run_post_dispatcher(db=db_session)
+
+    assert dispatched == 2
+    assert published_contents[0] == "Post 1 initial"
+    assert published_contents[1] == "Post 2 edited copy"
