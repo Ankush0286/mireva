@@ -77,14 +77,30 @@ async def _dispatch_single_dm(
         logger.debug("DM %s was already dispatched or modified. Skipping.", message_id)
         return False
 
-    # Extract strings into memory
     recipient_handle = lead.handle
     message_text = message.content
     account_handle = account.handle
     account_platform = account.platform.value
 
-    # 4. Execute Platform Adapter
+    reserved_period = None
+    remote_sent = False
     try:
+        # 4. Atomically reserve daily DM quota slot before launching external browser
+        reserved_period = await account_service.reserve_dm_slot(account_id)
+        if reserved_period is None:
+            logger.warning(
+                "Account @%s has reached its daily quota. Reverting claim for message %s.",
+                account.handle,
+                message_id,
+            )
+            await db.execute(
+                update(OutreachMessage)
+                .where(OutreachMessage.id == message_id)
+                .values(status=OutreachMessageStatus.APPROVED)
+            )
+            await db.commit()
+            return False
+
         adapter = PlatformRegistry.get_adapter(account)
         logger.info(
             "Dispatching cold DM %s via %s adapter to @%s...",
@@ -98,15 +114,17 @@ async def _dispatch_single_dm(
                 recipient_handle=recipient_handle,
                 message_text=message_text,
             )
+            remote_sent = True
         finally:
             await adapter.close()
 
-        # 5. Finalize delivery, update daily DM quota, and advance lead stage
+        # 5. Finalize delivery (slot was already reserved, so increment_quota=False)
         await outreach_service.record_delivery(
             RecordMessageDeliveryCommand(
                 message_id=message_id,
                 platform_message_id=thread_id,
-            )
+            ),
+            increment_quota=False,
         )
 
         await history_service.log_activity(
@@ -125,7 +143,7 @@ async def _dispatch_single_dm(
         )
         return True
 
-    except Exception as exc:
+    except BaseException as exc:
         logger.error(
             "Failed to dispatch cold DM %s to @%s: %s",
             message_id,
@@ -134,24 +152,52 @@ async def _dispatch_single_dm(
             exc_info=True,
         )
         await db.rollback()
-        await outreach_service.record_failure(
-            RecordMessageFailureCommand(
-                message_id=message_id,
-                error_message=str(exc),
-            )
-        )
-        await history_service.log_activity(
-            LogActivityCommand(
-                activity_type=ActivityType.MESSAGE_REJECTED,
-                severity=ActivitySeverity.ERROR,
-                title=f"Cold DM delivery failed on {account_platform}",
-                description=str(exc),
-                entity_type="outreach_message",
-                entity_id=message_id,
-                actor="dm_dispatcher",
-            )
-        )
-        return False
+
+        # Release the reserved quota slot if dispatch did not complete
+        if reserved_period is not None and not remote_sent:
+            try:
+                await account_service.release_dm_slot(account_id, period=reserved_period)
+            except Exception as rel_err:
+                await db.rollback()
+                logger.error(
+                    "Failed to release DM slot for account %s: %s",
+                    account_id,
+                    rel_err,
+                )
+
+        # Only transition to FAILED if the remote adapter did NOT complete the send
+        if not remote_sent:
+            try:
+                await outreach_service.record_failure(
+                    RecordMessageFailureCommand(
+                        message_id=message_id,
+                        error_message=str(exc) or type(exc).__name__,
+                    )
+                )
+                await history_service.log_activity(
+                    LogActivityCommand(
+                        activity_type=ActivityType.MESSAGE_REJECTED,
+                        severity=ActivitySeverity.ERROR,
+                        title=f"Cold DM delivery failed on {account_platform}",
+                        description=str(exc) or type(exc).__name__,
+                        entity_type="outreach_message",
+                        entity_id=message_id,
+                        actor="dm_dispatcher",
+                    )
+                )
+            except Exception as fail_err:
+                await db.rollback()
+                logger.error(
+                    "Failed to record delivery failure for DM %s to @%s: %s",
+                    message_id,
+                    recipient_handle,
+                    fail_err,
+                    exc_info=True,
+                )
+
+        if isinstance(exc, Exception):
+            return False
+        raise
 
 
 async def run_dm_dispatcher(db: AsyncSession | None = None) -> int:
@@ -175,8 +221,14 @@ async def run_dm_dispatcher(db: AsyncSession | None = None) -> int:
             "DMDispatcher: Found %d approved cold DMs ready for delivery.", len(approved_messages)
         )
 
-        for msg in approved_messages:
+        message_ids = [m.id for m in approved_messages]
+
+        for message_id in message_ids:
             try:
+                msg = await outreach_service.get_message_by_id(message_id, populate_existing=True)
+                if not msg or msg.status != OutreachMessageStatus.APPROVED:
+                    continue
+
                 success = await _dispatch_single_dm(
                     db=session,
                     message=msg,
@@ -187,7 +239,7 @@ async def run_dm_dispatcher(db: AsyncSession | None = None) -> int:
                 if success:
                     dispatched_count += 1
             except Exception as iter_exc:
-                logger.error("Error processing DM %s: %s", msg.id, iter_exc, exc_info=True)
+                logger.error("Error processing DM %s: %s", message_id, iter_exc, exc_info=True)
                 await session.rollback()
 
         return dispatched_count

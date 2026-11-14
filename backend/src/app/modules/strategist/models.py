@@ -87,7 +87,10 @@ class StrategistState(AuditBase):
     session: Mapped[ChatSession | None] = relationship("ChatSession")
 
     def is_due_to_wake(self) -> bool:
-        if self.status != StrategistStatus.SLEEPING or not self.next_cycle_at:
+        if (
+            self.status not in (StrategistStatus.SLEEPING, StrategistStatus.IDLE)
+            or not self.next_cycle_at
+        ):
             return False
         wake_at = (
             self.next_cycle_at.replace(tzinfo=UTC)

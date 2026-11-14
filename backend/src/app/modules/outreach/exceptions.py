@@ -1,6 +1,10 @@
 from uuid import UUID
 
-from app.common.exceptions import AppError, ConflictError, NotFoundError
+from app.common.exceptions import (
+    ConflictError,
+    NotFoundError,
+    RateLimitExceededError,
+)
 
 
 class LeadNotFoundError(NotFoundError):
@@ -55,7 +59,7 @@ class MessageAlreadyProcessedError(ConflictError):
         self.message_id = message_id
 
 
-class DailyDMQuotaExceededError(AppError):
+class DailyDMQuotaExceededError(RateLimitExceededError):
     """Raised when an account exceeds safe anti-ban cold DM limits."""
 
     def __init__(self, handle: str, limit: int):

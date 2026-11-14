@@ -1,18 +1,18 @@
 import logging
 from uuid import UUID
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.automation.throttler import account_throttler
-from app.common.enums import ActivitySeverity, ActivityType, PostStatus
+from app.common.enums import ActivitySeverity, ActivityType, CampaignStatus, PostStatus
 from app.db.session import async_session_factory
 from app.modules.accounts.service import AccountService
 from app.modules.campaigns.commands import (
     RecordPostDeliveryCommand,
     RecordPostFailureCommand,
 )
-from app.modules.campaigns.models import ScheduledPost
+from app.modules.campaigns.models import Campaign, ScheduledPost
 from app.modules.campaigns.service import CampaignService
 from app.modules.history.commands import LogActivityCommand
 from app.modules.history.service import HistoryService
@@ -21,22 +21,44 @@ from app.platforms.registry import PlatformRegistry
 logger = logging.getLogger(__name__)
 
 
-async def _claim_post_for_publishing(db: AsyncSession, post_id: UUID) -> bool:
+async def _claim_post_for_publishing(
+    db: AsyncSession, post_id: UUID, post: ScheduledPost | None = None
+) -> bool:
     """
-    Atomic claim guard: Transitions post to PUBLISHING only if it is still SCHEDULED.
-    Prevents race conditions where two workers publish duplicate posts.
+    Atomic claim guard: Transitions post to PUBLISHING only if it is still SCHEDULED
+    and its parent Campaign remains eligible (not PAUSED, ARCHIVED, or COMPLETED).
     """
+    eligible_campaign_subquery = (
+        select(Campaign.id)
+        .where(
+            Campaign.id == ScheduledPost.campaign_id,
+            Campaign.status.notin_(
+                [
+                    CampaignStatus.PAUSED,
+                    CampaignStatus.ARCHIVED,
+                    CampaignStatus.COMPLETED,
+                ]
+            ),
+        )
+        .scalar_subquery()
+    )
+
     stmt = (
         update(ScheduledPost)
         .where(
             ScheduledPost.id == post_id,
             ScheduledPost.status == PostStatus.SCHEDULED,
+            ScheduledPost.campaign_id == eligible_campaign_subquery,
         )
         .values(status=PostStatus.PUBLISHING)
+        .execution_options(synchronize_session=False)
     )
     result = await db.execute(stmt)
     await db.commit()
-    return getattr(result, "rowcount", 0) > 0
+    claimed = getattr(result, "rowcount", 0) > 0
+    if claimed and post is not None:
+        post.status = PostStatus.PUBLISHING
+    return claimed
 
 
 async def _dispatch_single_post(
@@ -50,7 +72,20 @@ async def _dispatch_single_post(
     post_id = post.id
     account_id = account.id
 
-    # 1. Quota & Cooldown Safety Guards
+    # Quota, Cooldown & Campaign Safety Guards
+    if post.campaign and post.campaign.status in (
+        CampaignStatus.PAUSED,
+        CampaignStatus.ARCHIVED,
+        CampaignStatus.COMPLETED,
+    ):
+        logger.warning(
+            "Campaign '%s' is %s. Skipping post %s.",
+            post.campaign.name,
+            post.campaign.status.value,
+            post_id,
+        )
+        return False
+
     if not account.can_post_today():
         reason = (
             "Account is paused (is_active=False)"
@@ -77,7 +112,7 @@ async def _dispatch_single_post(
         return False
 
     # 3. Atomically Claim the Post (Prevents duplicate posts across concurrent workers)
-    claimed = await _claim_post_for_publishing(db, post_id)
+    claimed = await _claim_post_for_publishing(db, post_id, post=post)
     if not claimed:
         logger.debug(
             "Post %s was already claimed or cancelled by another worker. Skipping.", post_id
@@ -174,8 +209,14 @@ async def run_post_dispatcher(db: AsyncSession | None = None) -> int:
 
         logger.info("PostDispatcher: Found %d due posts ready for delivery.", len(due_posts))
 
-        for post in due_posts:
+        post_ids = [p.id for p in due_posts]
+
+        for post_id in post_ids:
             try:
+                post = await campaign_service.get_post_by_id(post_id, populate_existing=True)
+                if not post or post.status != PostStatus.SCHEDULED:
+                    continue
+
                 success = await _dispatch_single_post(
                     db=session,
                     post=post,
@@ -186,7 +227,7 @@ async def run_post_dispatcher(db: AsyncSession | None = None) -> int:
                 if success:
                     dispatched_count += 1
             except Exception as iter_exc:
-                logger.error("Error processing post %s: %s", post.id, iter_exc, exc_info=True)
+                logger.error("Error processing post %s: %s", post_id, iter_exc, exc_info=True)
                 await session.rollback()
 
         return dispatched_count

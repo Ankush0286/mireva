@@ -37,6 +37,8 @@ from app.modules.accounts.service import AccountService
 from app.modules.campaigns.commands import (
     CreateCampaignCommand,
     QueuePostCommand,
+    UpdateCampaignCommand,
+    UpdatePostCommand,
 )
 from app.modules.campaigns.service import CampaignService
 from app.modules.history.service import HistoryService
@@ -490,3 +492,273 @@ async def test_quota_reset_worker_skips_recent_dm_counters(
 
     await db_session.refresh(account)
     assert account.daily_dms_sent == 4
+
+
+@pytest.mark.anyio
+async def test_resumed_strategist_wakes_on_heartbeat(db_session: AsyncSession):
+    """Verifies that unpausing the strategist allows the heartbeat worker to wake it."""
+    service = StrategistService(db_session)
+    await service.toggle_pause()
+    resumed = await service.toggle_pause()
+
+    assert resumed.status == StrategistStatus.IDLE
+    assert resumed.next_cycle_at is not None
+
+    mock_model = TestModel(call_tools=["sleep"], custom_output_text="Cycle complete.")
+    with marketing_agent.override(model=mock_model):
+        ran = await run_strategist_heartbeat(db=db_session)
+
+    assert ran == 1
+
+
+@pytest.mark.anyio
+async def test_paused_campaign_does_not_publish_posts(db_session: AsyncSession):
+    """Verifies that post_dispatcher skips posts belonging to paused campaigns."""
+    acc_service = AccountService(db_session)
+    camp_service = CampaignService(db_session)
+
+    account = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="pause_camp_bot")
+    )
+    await account_throttler.reset(account.id)
+
+    campaign = await camp_service.create_campaign(
+        CreateCampaignCommand(name="Summer Promo", status=CampaignStatus.ACTIVE)
+    )
+    await camp_service.queue_post(
+        QueuePostCommand(
+            campaign_id=campaign.id,
+            account_id=account.id,
+            content="Should NOT go live while campaign is paused",
+            scheduled_at=datetime.now(UTC) - timedelta(minutes=5),
+            status=PostStatus.SCHEDULED,
+        )
+    )
+
+    await camp_service.update_campaign(
+        UpdateCampaignCommand(campaign_id=campaign.id, status=CampaignStatus.PAUSED)
+    )
+
+    dispatched = await run_post_dispatcher(db=db_session)
+    assert dispatched == 0
+
+
+@pytest.mark.anyio
+async def test_dm_not_stuck_as_dispatched_on_worker_cancellation(db_session: AsyncSession):
+    """Verifies task cancellation during DM send fails gracefully instead of staying DISPATCHED."""
+    acc_service = AccountService(db_session)
+    outreach_service = OutreachService(db_session)
+
+    account = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="cancel_dm_bot")
+    )
+    await account_throttler.reset(account.id)
+
+    lead = await outreach_service.create_lead(
+        CreateLeadCommand(platform=PlatformType.TWITTER, handle="target_founder")
+    )
+    msg = await outreach_service.stage_message(
+        StageMessageCommand(lead_id=lead.id, account_id=account.id, content="Hello!")
+    )
+    await outreach_service.review_message(
+        ReviewMessageCommand(message_id=msg.id, status=OutreachMessageStatus.APPROVED)
+    )
+
+    mock_adapter = MagicMock()
+    mock_adapter.send_dm = AsyncMock(side_effect=asyncio.CancelledError("Container shutting down"))
+    mock_adapter.close = AsyncMock()
+
+    with (
+        patch(
+            "app.automation.workers.dm_dispatcher.PlatformRegistry.get_adapter",
+            return_value=mock_adapter,
+        ),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await run_dm_dispatcher(db=db_session)
+
+    refreshed = await outreach_service.get_message_by_id_or_raise(msg.id)
+    assert refreshed.status == OutreachMessageStatus.FAILED
+
+
+@pytest.mark.anyio
+async def test_post_not_claimed_if_campaign_paused_during_throttle_wait(db_session: AsyncSession):
+    """
+    Verifies that if a campaign is paused while wait_and_acquire is pending,
+    _claim_post_for_publishing rejects the claim and skips publishing.
+    """
+    acc_service = AccountService(db_session)
+    camp_service = CampaignService(db_session)
+
+    account = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="throttle_race_bot")
+    )
+    await account_throttler.reset(account.id)
+
+    campaign = await camp_service.create_campaign(
+        CreateCampaignCommand(name="Race Promo", status=CampaignStatus.ACTIVE)
+    )
+    post = await camp_service.queue_post(
+        QueuePostCommand(
+            campaign_id=campaign.id,
+            account_id=account.id,
+            content="Race post",
+            scheduled_at=datetime.now(UTC) - timedelta(minutes=5),
+            status=PostStatus.SCHEDULED,
+        )
+    )
+    post_id = post.id
+
+    async def _pause_campaign_during_wait(*args: object, **kwargs: object) -> bool:
+        # Pause the campaign while worker is waiting in throttler
+        await camp_service.update_campaign(
+            UpdateCampaignCommand(campaign_id=campaign.id, status=CampaignStatus.PAUSED)
+        )
+        return True
+
+    with patch.object(
+        account_throttler, "wait_and_acquire", side_effect=_pause_campaign_during_wait
+    ):
+        dispatched = await run_post_dispatcher(db=db_session)
+
+    assert dispatched == 0
+    refreshed_post = await camp_service.get_post_by_id_or_raise(post_id)
+    assert refreshed_post.status == PostStatus.SCHEDULED
+
+
+@pytest.mark.anyio
+async def test_post_dispatcher_continues_batch_when_first_post_fails(db_session: AsyncSession):
+    """
+    Verifies that if the first post in a batch raises an exception and triggers a rollback,
+    the dispatcher loop does not abort and successfully processes the second post.
+    """
+    acc_service = AccountService(db_session)
+    camp_service = CampaignService(db_session)
+
+    account1 = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="batch_isolation_bot_1")
+    )
+    account2 = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="batch_isolation_bot_2")
+    )
+    await account_throttler.reset(account1.id)
+    await account_throttler.reset(account2.id)
+
+    campaign = await camp_service.create_campaign(
+        CreateCampaignCommand(name="Batch Camp", status=CampaignStatus.ACTIVE)
+    )
+
+    post1 = await camp_service.queue_post(
+        QueuePostCommand(
+            campaign_id=campaign.id,
+            account_id=account1.id,
+            content="Post 1 will fail",
+            scheduled_at=datetime.now(UTC) - timedelta(minutes=10),
+            status=PostStatus.SCHEDULED,
+        )
+    )
+    post2 = await camp_service.queue_post(
+        QueuePostCommand(
+            campaign_id=campaign.id,
+            account_id=account2.id,
+            content="Post 2 will succeed",
+            scheduled_at=datetime.now(UTC) - timedelta(minutes=5),
+            status=PostStatus.SCHEDULED,
+        )
+    )
+
+    call_count = 0
+
+    async def _mock_publish(content: str, media_paths: list[str] | None = None) -> PublishResult:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("Simulated network drop on post 1")
+        return PublishResult(platform_post_id="post_2_success")
+
+    mock_adapter = MagicMock()
+    mock_adapter.publish_post = AsyncMock(side_effect=_mock_publish)
+    mock_adapter.close = AsyncMock()
+
+    with patch.object(PlatformRegistry, "get_adapter", return_value=mock_adapter):
+        dispatched = await run_post_dispatcher(db=db_session)
+
+    assert dispatched == 1
+
+    refreshed_post1 = await camp_service.get_post_by_id_or_raise(post1.id)
+    assert refreshed_post1.status == PostStatus.SCHEDULED  # Retried
+    assert "Simulated network drop on post 1" in (refreshed_post1.last_error_message or "")
+
+    refreshed_post2 = await camp_service.get_post_by_id_or_raise(post2.id)
+    assert refreshed_post2.status == PostStatus.PUBLISHED
+    assert refreshed_post2.platform_post_id == "post_2_success"
+
+
+@pytest.mark.anyio
+async def test_post_dispatcher_reloads_updated_content_in_batch(db_session: AsyncSession):
+    """
+    Verifies that if post2 is edited in another session while post1 is publishing,
+    the dispatcher reloads the updated content from the DB (populate_existing=True)
+    and dispatches the new copy.
+    """
+    acc_service = AccountService(db_session)
+    camp_service = CampaignService(db_session)
+
+    account1 = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="edit_race_bot_1")
+    )
+    account2 = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="edit_race_bot_2")
+    )
+    await account_throttler.reset(account1.id)
+    await account_throttler.reset(account2.id)
+
+    campaign = await camp_service.create_campaign(
+        CreateCampaignCommand(name="Edit Race Camp", status=CampaignStatus.ACTIVE)
+    )
+
+    await camp_service.queue_post(
+        QueuePostCommand(
+            campaign_id=campaign.id,
+            account_id=account1.id,
+            content="Post 1 initial",
+            scheduled_at=datetime.now(UTC) - timedelta(minutes=10),
+            status=PostStatus.SCHEDULED,
+        )
+    )
+    post2 = await camp_service.queue_post(
+        QueuePostCommand(
+            campaign_id=campaign.id,
+            account_id=account2.id,
+            content="Post 2 initial",
+            scheduled_at=datetime.now(UTC) - timedelta(minutes=5),
+            status=PostStatus.SCHEDULED,
+        )
+    )
+
+    published_contents = []
+
+    async def _mock_publish(content: str, media_paths: list[str] | None = None) -> PublishResult:
+        published_contents.append(content)
+        # While post 1 is publishing, edit post 2's content in a separate session
+        if len(published_contents) == 1:
+            from sqlalchemy.ext.asyncio import async_sessionmaker
+
+            factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+            async with factory() as other_session:
+                other_camp_service = CampaignService(other_session)
+                await other_camp_service.update_post(
+                    UpdatePostCommand(post_id=post2.id, content="Post 2 edited copy")
+                )
+        return PublishResult(platform_post_id=f"pub_{len(published_contents)}")
+
+    mock_adapter = MagicMock()
+    mock_adapter.publish_post = AsyncMock(side_effect=_mock_publish)
+    mock_adapter.close = AsyncMock()
+
+    with patch.object(PlatformRegistry, "get_adapter", return_value=mock_adapter):
+        dispatched = await run_post_dispatcher(db=db_session)
+
+    assert dispatched == 2
+    assert published_contents[0] == "Post 1 initial"
+    assert published_contents[1] == "Post 2 edited copy"

@@ -108,7 +108,9 @@ class CampaignService:
     # Scheduled Post Queries & Lifecycle Mutations
     # =========================================================================
 
-    async def get_post_by_id(self, post_id: UUID | str) -> ScheduledPost | None:
+    async def get_post_by_id(
+        self, post_id: UUID | str, populate_existing: bool = False
+    ) -> ScheduledPost | None:
         target_id = _ensure_uuid(post_id)
         stmt = (
             select(ScheduledPost)
@@ -118,6 +120,8 @@ class CampaignService:
             )
             .where(ScheduledPost.id == target_id)
         )
+        if populate_existing:
+            stmt = stmt.execution_options(populate_existing=True)
         result = await self.db.execute(stmt)
         return result.scalars().first()
 
@@ -149,10 +153,21 @@ class CampaignService:
         now = datetime.now(UTC)
         stmt = (
             select(ScheduledPost)
-            .options(selectinload(ScheduledPost.account))
+            .join(Campaign, ScheduledPost.campaign_id == Campaign.id)
+            .options(
+                selectinload(ScheduledPost.account),
+                selectinload(ScheduledPost.campaign),
+            )
             .where(
                 ScheduledPost.status == PostStatus.SCHEDULED,
                 ScheduledPost.scheduled_at <= now,
+                Campaign.status.notin_(
+                    [
+                        CampaignStatus.PAUSED,
+                        CampaignStatus.ARCHIVED,
+                        CampaignStatus.COMPLETED,
+                    ]
+                ),
             )
             .order_by(ScheduledPost.scheduled_at.asc())
             .limit(limit)
@@ -163,7 +178,11 @@ class CampaignService:
     async def queue_post(self, cmd: QueuePostCommand) -> ScheduledPost:
         campaign = await self.get_campaign_by_id_or_raise(cmd.campaign_id)
 
-        if campaign.status in (CampaignStatus.ARCHIVED, CampaignStatus.COMPLETED):
+        if campaign.status in (
+            CampaignStatus.ARCHIVED,
+            CampaignStatus.COMPLETED,
+            CampaignStatus.PAUSED,
+        ):
             raise CampaignInactiveError(campaign.id, campaign.status.value)
 
         acc_stmt = select(ConnectedAccount).where(ConnectedAccount.id == cmd.account_id)
@@ -257,6 +276,7 @@ class CampaignService:
 
     async def record_delivery(self, cmd: RecordPostDeliveryCommand) -> ScheduledPost:
         post = await self.get_post_by_id_or_raise(cmd.post_id)
+        await self.db.refresh(post)
         post.mark_as_published(
             post_id=cmd.platform_post_id,
             post_url=cmd.platform_post_url,
@@ -267,6 +287,7 @@ class CampaignService:
 
     async def record_failure(self, cmd: RecordPostFailureCommand) -> ScheduledPost:
         post = await self.get_post_by_id_or_raise(cmd.post_id)
+        await self.db.refresh(post)
         post.mark_as_failed(error=cmd.error_message)
         await self.db.commit()
         await self.db.refresh(post)

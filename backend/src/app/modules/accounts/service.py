@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import AccountStatus, PlatformType
@@ -31,7 +31,14 @@ class AccountService:
         target_id = _ensure_uuid(account_id)
         stmt = select(ConnectedAccount).where(ConnectedAccount.id == target_id)
         result = await self.db.execute(stmt)
-        return result.scalars().first()
+        account = result.scalars().first()
+        if account:
+            reset = account._check_and_reset_daily_quotas()
+            cd_reset = account._check_and_reset_cooldown()
+            if reset or cd_reset:
+                await self.db.commit()
+                await self.db.refresh(account)
+        return account
 
     async def get_by_id_or_raise(self, account_id: UUID | str) -> ConnectedAccount:
         account = await self.get_by_id(account_id)
@@ -47,14 +54,35 @@ class AccountService:
             ConnectedAccount.handle == handle,
         )
         result = await self.db.execute(stmt)
-        return result.scalars().first()
+        account = result.scalars().first()
+        if account:
+            reset = account._check_and_reset_daily_quotas()
+            cd_reset = account._check_and_reset_cooldown()
+            if reset or cd_reset:
+                await self.db.commit()
+                await self.db.refresh(account)
+        return account
 
-    async def list_accounts(self, active_only: bool = False) -> list[ConnectedAccount]:
+    async def list_accounts(
+        self, active_only: bool = False, auto_reset: bool = True
+    ) -> list[ConnectedAccount]:
         stmt = select(ConnectedAccount).order_by(ConnectedAccount.created_at.desc())
         if active_only:
             stmt = stmt.where(ConnectedAccount.is_active.is_(True))
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        accounts = list(result.scalars().all())
+        if auto_reset:
+            any_reset = False
+            for acc in accounts:
+                if acc._check_and_reset_daily_quotas():
+                    any_reset = True
+                if acc._check_and_reset_cooldown():
+                    any_reset = True
+            if any_reset:
+                await self.db.commit()
+                for acc in accounts:
+                    await self.db.refresh(acc)
+        return accounts
 
     # ================= Command / Mutation Methods =================
 
@@ -139,15 +167,20 @@ class AccountService:
             "api_secret": decrypt_token(account.encrypted_api_secret),
         }
 
-    async def record_post_activity(self, account_id: UUID | str) -> ConnectedAccount:
+    async def record_post_activity(
+        self, account_id: UUID | str, enforce_limits: bool = True
+    ) -> ConnectedAccount:
         account = await self.get_by_id_or_raise(account_id)
 
-        if account.is_in_cooldown():
-            until_str = account.cooldown_until.isoformat() if account.cooldown_until else "unknown"
-            raise AccountInCooldownError(account.handle, until_str)
+        if enforce_limits:
+            if account.is_in_cooldown():
+                until_str = (
+                    account.cooldown_until.isoformat() if account.cooldown_until else "unknown"
+                )
+                raise AccountInCooldownError(account.handle, until_str)
 
-        if not account.can_post_today():
-            raise DailyPostQuotaExceededError(account.handle, account.daily_post_limit)
+            if not account.can_post_today():
+                raise DailyPostQuotaExceededError(account.handle, account.daily_post_limit)
 
         account.daily_posts_sent += 1
         account.last_action_at = datetime.now(UTC)
@@ -156,15 +189,85 @@ class AccountService:
         await self.db.refresh(account)
         return account
 
-    async def record_dm_activity(self, account_id: UUID | str) -> ConnectedAccount:
+    async def record_dm_activity(
+        self, account_id: UUID | str, enforce_limits: bool = True
+    ) -> ConnectedAccount:
         account = await self.get_by_id_or_raise(account_id)
-        account._check_and_reset_daily_quotas()
+
+        if enforce_limits:
+            if account.is_in_cooldown():
+                until_str = (
+                    account.cooldown_until.isoformat() if account.cooldown_until else "unknown"
+                )
+                raise AccountInCooldownError(account.handle, until_str)
+
+            if not account.can_send_dm_today():
+                from app.modules.outreach.exceptions import DailyDMQuotaExceededError
+
+                raise DailyDMQuotaExceededError(account.handle, account.daily_dm_limit)
+
         account.daily_dms_sent += 1
         account.last_action_at = datetime.now(UTC)
 
         await self.db.commit()
         await self.db.refresh(account)
         return account
+
+    async def reserve_dm_slot(self, account_id: UUID | str) -> datetime | None:
+        """
+        Atomically checks cooldown and daily quota, and reserves a slot
+        by incrementing daily_dms_sent before dispatch only if below daily_dm_limit.
+        Returns the account's daily_counters_reset_at quota period if reserved,
+        or None if reservation was rejected.
+        """
+        target_id = _ensure_uuid(account_id)
+        account = await self.get_by_id_or_raise(target_id)
+        if account.is_in_cooldown() or not account.can_send_dm_today():
+            return None
+
+        current_period = account.daily_counters_reset_at
+        stmt = (
+            update(ConnectedAccount)
+            .where(
+                ConnectedAccount.id == target_id,
+                ConnectedAccount.is_active.is_(True),
+                ConnectedAccount.status == AccountStatus.ACTIVE,
+                ConnectedAccount.daily_counters_reset_at == current_period,
+                ConnectedAccount.daily_dms_sent < ConnectedAccount.daily_dm_limit,
+            )
+            .values(
+                daily_dms_sent=ConnectedAccount.daily_dms_sent + 1,
+                last_action_at=datetime.now(UTC),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        res = await self.db.execute(stmt)
+        await self.db.commit()
+        if getattr(res, "rowcount", 0) > 0:
+            return current_period
+        return None
+
+    async def release_dm_slot(self, account_id: UUID | str, period: datetime | None = None) -> bool:
+        """
+        Releases a previously reserved quota slot if dispatch failed.
+        Verifies that the quota period still matches before decrementing
+        so a reset from a new day is never decremented.
+        """
+        target_id = _ensure_uuid(account_id)
+        stmt = update(ConnectedAccount).where(
+            ConnectedAccount.id == target_id,
+            ConnectedAccount.daily_dms_sent > 0,
+        )
+        if period is not None:
+            stmt = stmt.where(ConnectedAccount.daily_counters_reset_at == period)
+
+        stmt = stmt.values(daily_dms_sent=ConnectedAccount.daily_dms_sent - 1).execution_options(
+            synchronize_session=False
+        )
+
+        res = await self.db.execute(stmt)
+        await self.db.commit()
+        return getattr(res, "rowcount", 0) > 0
 
     async def set_cooldown(self, account_id: UUID | str, until: datetime) -> ConnectedAccount:
         account = await self.get_by_id_or_raise(account_id)

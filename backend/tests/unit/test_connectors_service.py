@@ -12,6 +12,7 @@ from app.modules.connectors.commands import (
 from app.modules.connectors.exceptions import (
     ConnectorAlreadyExistsError,
     ConnectorNotFoundError,
+    ConnectorRateLimitError,
     InvalidConnectorConfigError,
 )
 from app.modules.connectors.service import ConnectorService
@@ -301,3 +302,28 @@ async def test_fetch_opportunities_on_paused_connector_raises(db_session: AsyncS
 
     with pytest.raises(InvalidConnectorConfigError):
         await service.fetch_opportunities(connector.id)
+
+
+@pytest.mark.anyio
+async def test_connector_rate_limit_sets_rate_limited_status(db_session: AsyncSession):
+    """Verifies that ConnectorRateLimitError transitions connector status to RATE_LIMITED."""
+    service = ConnectorService(db_session)
+    connector = await service.create_connector(
+        CreateConnectorCommand(
+            name="GSC Rate Limit Test",
+            connector_type=ConnectorType.GOOGLE_SEARCH_CONSOLE,
+            target_identifier="https://example.com",
+            refresh_token="tok_123",
+        )
+    )
+
+    with patch("app.modules.connectors.service.resolve_provider") as mock_resolve:
+        mock_provider = AsyncMock()
+        mock_provider.fetch_opportunities.side_effect = ConnectorRateLimitError("GSC")
+        mock_resolve.return_value = mock_provider
+
+        with pytest.raises(ConnectorRateLimitError):
+            await service.fetch_opportunities(connector.id)
+
+    await db_session.refresh(connector)
+    assert connector.status == ConnectorStatus.RATE_LIMITED

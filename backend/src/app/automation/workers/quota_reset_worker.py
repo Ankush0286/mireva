@@ -25,7 +25,7 @@ async def run_quota_reset_worker(db: AsyncSession | None = None) -> int:
         account_service = AccountService(session)
         history_service = HistoryService(session)
 
-        accounts = await account_service.list_accounts()
+        accounts = await account_service.list_accounts(auto_reset=False)
 
         for account in accounts:
             prev_posts = account.daily_posts_sent

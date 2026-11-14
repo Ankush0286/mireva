@@ -14,6 +14,7 @@ from app.modules.accounts.exceptions import (
     DailyPostQuotaExceededError,
 )
 from app.modules.accounts.service import AccountService
+from app.modules.outreach.exceptions import DailyDMQuotaExceededError
 
 
 @pytest.mark.anyio
@@ -261,3 +262,38 @@ async def test_mark_browser_session_authenticated_not_found_raises(db_session: A
     service = AccountService(db_session)
     with pytest.raises(AccountNotFoundError):
         await service.mark_browser_session_authenticated(uuid4(), "dummy/path.json")
+
+
+@pytest.mark.anyio
+async def test_account_recovers_after_cooldown_expires(db_session: AsyncSession):
+    """Verifies that an account in RATE_LIMITED status recovers to ACTIVE once cooldown expires."""
+    service = AccountService(db_session)
+    account = await service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="cooldown_recovery_bot")
+    )
+
+    expired_time = datetime.now(UTC) - timedelta(minutes=10)
+    await service.set_cooldown(account.id, until=expired_time)
+
+    assert account.is_in_cooldown() is False
+    assert account.can_post_today() is True
+    assert account.status == AccountStatus.ACTIVE
+
+
+@pytest.mark.anyio
+async def test_record_dm_activity_enforces_daily_limit(db_session: AsyncSession):
+    """Verifies record_dm_activity raises DailyDMQuotaExceededError when limit is reached."""
+    service = AccountService(db_session)
+    account = await service.create_account(
+        CreateAccountCommand(
+            platform=PlatformType.TWITTER,
+            handle="dm_limit_bypass_bot",
+            daily_dm_limit=1,
+        )
+    )
+
+    await service.record_dm_activity(account.id)
+    assert account.daily_dms_sent == 1
+
+    with pytest.raises(DailyDMQuotaExceededError):
+        await service.record_dm_activity(account.id)
