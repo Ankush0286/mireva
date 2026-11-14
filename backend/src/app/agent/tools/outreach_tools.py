@@ -247,15 +247,6 @@ async def dispatch_dm_now(
                 )
                 return {"error": f"Account @{account.handle} is in cooldown until {until_str}"}
 
-            if not account.can_send_dm_today():
-                return {
-                    "error": f"Account @{account.handle} has reached its daily limit of {account.daily_dm_limit} cold DMs."
-                }
-
-            # Read related entities into memory before any refresh
-            lead_handle = msg.lead.handle
-            content_to_send = msg.content
-
             if msg.status == OutreachMessageStatus.STAGED:
                 await service.review_message(
                     ReviewMessageCommand(
@@ -264,24 +255,45 @@ async def dispatch_dm_now(
                     )
                 )
 
+            # Atomically reserve quota slot before launching external browser
+            reserved = await acc_service.reserve_dm_slot(msg.account_id)
+            if not reserved:
+                return {
+                    "error": f"Account @{account.handle} has reached its daily limit of {account.daily_dm_limit} cold DMs or is in cooldown."
+                }
+
+            # Read related entities into memory before any refresh
+            lead_handle = msg.lead.handle
+            content_to_send = msg.content
+            acc_id = msg.account_id
+
         # Execute browser adapter outside the database lock
+        send_succeeded = False
         adapter = PlatformRegistry.get_adapter(account)
         try:
             thread_id = await adapter.send_dm(
                 recipient_handle=lead_handle,
                 message_text=content_to_send,
             )
+            send_succeeded = True
         finally:
             await adapter.close()
+            if not send_succeeded:
+                try:
+                    async with ctx.deps.db_session_scope() as db:
+                        await AccountService(db).release_dm_slot(acc_id)
+                except Exception:
+                    pass
 
-        # Record outcome in a fresh database scope
+        # Record outcome in a fresh database scope (slot was already reserved, so increment_quota=False)
         async with ctx.deps.db_session_scope() as db:
             service = OutreachService(db)
             delivered = await service.record_delivery(
                 RecordMessageDeliveryCommand(
                     message_id=UUID(message_id),
                     platform_message_id=thread_id,
-                )
+                ),
+                increment_quota=False,
             )
             return {
                 "id": str(delivered.id),

@@ -622,3 +622,71 @@ async def test_post_not_claimed_if_campaign_paused_during_throttle_wait(db_sessi
     assert dispatched == 0
     refreshed_post = await camp_service.get_post_by_id_or_raise(post.id)
     assert refreshed_post.status == PostStatus.SCHEDULED
+
+
+@pytest.mark.anyio
+async def test_post_dispatcher_continues_batch_when_first_post_fails(db_session: AsyncSession):
+    """
+    Verifies that if the first post in a batch raises an exception and triggers a rollback,
+    the dispatcher loop does not abort and successfully processes the second post.
+    """
+    acc_service = AccountService(db_session)
+    camp_service = CampaignService(db_session)
+
+    account1 = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="batch_isolation_bot_1")
+    )
+    account2 = await acc_service.create_account(
+        CreateAccountCommand(platform=PlatformType.TWITTER, handle="batch_isolation_bot_2")
+    )
+    await account_throttler.reset(account1.id)
+    await account_throttler.reset(account2.id)
+
+    campaign = await camp_service.create_campaign(
+        CreateCampaignCommand(name="Batch Camp", status=CampaignStatus.ACTIVE)
+    )
+
+    post1 = await camp_service.queue_post(
+        QueuePostCommand(
+            campaign_id=campaign.id,
+            account_id=account1.id,
+            content="Post 1 will fail",
+            scheduled_at=datetime.now(UTC) - timedelta(minutes=10),
+            status=PostStatus.SCHEDULED,
+        )
+    )
+    post2 = await camp_service.queue_post(
+        QueuePostCommand(
+            campaign_id=campaign.id,
+            account_id=account2.id,
+            content="Post 2 will succeed",
+            scheduled_at=datetime.now(UTC) - timedelta(minutes=5),
+            status=PostStatus.SCHEDULED,
+        )
+    )
+
+    call_count = 0
+
+    async def _mock_publish(content: str, media_paths: list[str] | None = None) -> PublishResult:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("Simulated network drop on post 1")
+        return PublishResult(platform_post_id="post_2_success")
+
+    mock_adapter = MagicMock()
+    mock_adapter.publish_post = AsyncMock(side_effect=_mock_publish)
+    mock_adapter.close = AsyncMock()
+
+    with patch.object(PlatformRegistry, "get_adapter", return_value=mock_adapter):
+        dispatched = await run_post_dispatcher(db=db_session)
+
+    assert dispatched == 1
+
+    refreshed_post1 = await camp_service.get_post_by_id_or_raise(post1.id)
+    assert refreshed_post1.status == PostStatus.SCHEDULED  # Retried
+    assert "Simulated network drop on post 1" in (refreshed_post1.last_error_message or "")
+
+    refreshed_post2 = await camp_service.get_post_by_id_or_raise(post2.id)
+    assert refreshed_post2.status == PostStatus.PUBLISHED
+    assert refreshed_post2.platform_post_id == "post_2_success"

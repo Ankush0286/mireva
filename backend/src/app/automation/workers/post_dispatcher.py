@@ -21,7 +21,9 @@ from app.platforms.registry import PlatformRegistry
 logger = logging.getLogger(__name__)
 
 
-async def _claim_post_for_publishing(db: AsyncSession, post_id: UUID) -> bool:
+async def _claim_post_for_publishing(
+    db: AsyncSession, post_id: UUID, post: ScheduledPost | None = None
+) -> bool:
     """
     Atomic claim guard: Transitions post to PUBLISHING only if it is still SCHEDULED
     and its parent Campaign remains eligible (not PAUSED, ARCHIVED, or COMPLETED).
@@ -53,7 +55,10 @@ async def _claim_post_for_publishing(db: AsyncSession, post_id: UUID) -> bool:
     )
     result = await db.execute(stmt)
     await db.commit()
-    return getattr(result, "rowcount", 0) > 0
+    claimed = getattr(result, "rowcount", 0) > 0
+    if claimed and post is not None:
+        post.status = PostStatus.PUBLISHING
+    return claimed
 
 
 async def _dispatch_single_post(
@@ -107,7 +112,7 @@ async def _dispatch_single_post(
         return False
 
     # 3. Atomically Claim the Post (Prevents duplicate posts across concurrent workers)
-    claimed = await _claim_post_for_publishing(db, post_id)
+    claimed = await _claim_post_for_publishing(db, post_id, post=post)
     if not claimed:
         logger.debug(
             "Post %s was already claimed or cancelled by another worker. Skipping.", post_id
@@ -204,9 +209,14 @@ async def run_post_dispatcher(db: AsyncSession | None = None) -> int:
 
         logger.info("PostDispatcher: Found %d due posts ready for delivery.", len(due_posts))
 
-        for post in due_posts:
-            target_post_id = post.id
+        post_ids = [p.id for p in due_posts]
+
+        for post_id in post_ids:
             try:
+                post = await campaign_service.get_post_by_id(post_id)
+                if not post or post.status != PostStatus.SCHEDULED:
+                    continue
+
                 success = await _dispatch_single_post(
                     db=session,
                     post=post,
@@ -217,9 +227,7 @@ async def run_post_dispatcher(db: AsyncSession | None = None) -> int:
                 if success:
                     dispatched_count += 1
             except Exception as iter_exc:
-                logger.error(
-                    "Error processing post %s: %s", target_post_id, iter_exc, exc_info=True
-                )
+                logger.error("Error processing post %s: %s", post_id, iter_exc, exc_info=True)
                 await session.rollback()
 
         return dispatched_count

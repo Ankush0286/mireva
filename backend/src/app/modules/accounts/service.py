@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.enums import AccountStatus, PlatformType
@@ -212,6 +212,49 @@ class AccountService:
         await self.db.commit()
         await self.db.refresh(account)
         return account
+
+    async def reserve_dm_slot(self, account_id: UUID | str) -> bool:
+        """
+        Atomically checks cooldown and daily quota, and reserves a slot
+        by incrementing daily_dms_sent before dispatch only if below daily_dm_limit.
+        """
+        target_id = _ensure_uuid(account_id)
+        account = await self.get_by_id_or_raise(target_id)
+        if account.is_in_cooldown() or not account.can_send_dm_today():
+            return False
+
+        stmt = (
+            update(ConnectedAccount)
+            .where(
+                ConnectedAccount.id == target_id,
+                ConnectedAccount.is_active.is_(True),
+                ConnectedAccount.status == AccountStatus.ACTIVE,
+                ConnectedAccount.daily_dms_sent < ConnectedAccount.daily_dm_limit,
+            )
+            .values(
+                daily_dms_sent=ConnectedAccount.daily_dms_sent + 1,
+                last_action_at=datetime.now(UTC),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        res = await self.db.execute(stmt)
+        await self.db.commit()
+        return getattr(res, "rowcount", 0) > 0
+
+    async def release_dm_slot(self, account_id: UUID | str) -> None:
+        """Releases a previously reserved quota slot if dispatch failed."""
+        target_id = _ensure_uuid(account_id)
+        stmt = (
+            update(ConnectedAccount)
+            .where(
+                ConnectedAccount.id == target_id,
+                ConnectedAccount.daily_dms_sent > 0,
+            )
+            .values(daily_dms_sent=ConnectedAccount.daily_dms_sent - 1)
+            .execution_options(synchronize_session=False)
+        )
+        await self.db.execute(stmt)
+        await self.db.commit()
 
     async def set_cooldown(self, account_id: UUID | str, until: datetime) -> ConnectedAccount:
         account = await self.get_by_id_or_raise(account_id)

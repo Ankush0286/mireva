@@ -77,6 +77,22 @@ async def _dispatch_single_dm(
         logger.debug("DM %s was already dispatched or modified. Skipping.", message_id)
         return False
 
+    # 4. Atomically reserve daily DM quota slot before launching external browser
+    reserved = await account_service.reserve_dm_slot(account_id)
+    if not reserved:
+        logger.warning(
+            "Account @%s has reached its daily quota. Reverting claim for message %s.",
+            account.handle,
+            message_id,
+        )
+        await db.execute(
+            update(OutreachMessage)
+            .where(OutreachMessage.id == message_id)
+            .values(status=OutreachMessageStatus.APPROVED)
+        )
+        await db.commit()
+        return False
+
     # Extract strings into memory
     recipient_handle = lead.handle
     message_text = message.content
@@ -103,12 +119,13 @@ async def _dispatch_single_dm(
         finally:
             await adapter.close()
 
-        # 5. Finalize delivery, update daily DM quota, and advance lead stage
+        # 5. Finalize delivery (slot was already reserved, so increment_quota=False)
         await outreach_service.record_delivery(
             RecordMessageDeliveryCommand(
                 message_id=message_id,
                 platform_message_id=thread_id,
-            )
+            ),
+            increment_quota=False,
         )
 
         await history_service.log_activity(
@@ -136,6 +153,13 @@ async def _dispatch_single_dm(
             exc_info=True,
         )
         await db.rollback()
+
+        # Release the reserved quota slot if dispatch did not complete
+        if not remote_sent:
+            try:
+                await account_service.release_dm_slot(account_id)
+            except Exception:
+                pass
 
         # Only transition to FAILED if the remote adapter did NOT complete the send
         if not remote_sent:
@@ -193,9 +217,14 @@ async def run_dm_dispatcher(db: AsyncSession | None = None) -> int:
             "DMDispatcher: Found %d approved cold DMs ready for delivery.", len(approved_messages)
         )
 
-        for msg in approved_messages:
-            target_msg_id = msg.id
+        message_ids = [m.id for m in approved_messages]
+
+        for message_id in message_ids:
             try:
+                msg = await outreach_service.get_message_by_id(message_id)
+                if not msg or msg.status != OutreachMessageStatus.APPROVED:
+                    continue
+
                 success = await _dispatch_single_dm(
                     db=session,
                     message=msg,
@@ -206,7 +235,7 @@ async def run_dm_dispatcher(db: AsyncSession | None = None) -> int:
                 if success:
                     dispatched_count += 1
             except Exception as iter_exc:
-                logger.error("Error processing DM %s: %s", target_msg_id, iter_exc, exc_info=True)
+                logger.error("Error processing DM %s: %s", message_id, iter_exc, exc_info=True)
                 await session.rollback()
 
         return dispatched_count

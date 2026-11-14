@@ -272,6 +272,7 @@ class CampaignService:
 
     async def record_delivery(self, cmd: RecordPostDeliveryCommand) -> ScheduledPost:
         post = await self.get_post_by_id_or_raise(cmd.post_id)
+        await self.db.refresh(post)
         post.mark_as_published(
             post_id=cmd.platform_post_id,
             post_url=cmd.platform_post_url,
@@ -282,6 +283,7 @@ class CampaignService:
 
     async def record_failure(self, cmd: RecordPostFailureCommand) -> ScheduledPost:
         post = await self.get_post_by_id_or_raise(cmd.post_id)
+        await self.db.refresh(post)
         post.mark_as_failed(error=cmd.error_message)
         await self.db.commit()
         await self.db.refresh(post)
